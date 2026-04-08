@@ -8,7 +8,8 @@ version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
     "telethon>=1.36",
-    "google-generativeai>=0.8",
+    "python-socks[asyncio]>=2.5.3",
+    "google-genai>=1.11",
     "apscheduler>=3.10",
     "aiosqlite>=0.20",
     "pydantic-settings>=2.5",

@@ -54,7 +54,7 @@ def test_settings_missing_required_field_raises():
         from core.config import Settings
 
         with pytest.raises(Exception):
-            Settings()
+            Settings(_env_file=None)
 
 
 def test_settings_has_db_path():
@@ -77,3 +77,24 @@ def test_get_settings_returns_settings_instance():
 
         assert isinstance(settings, Settings)
         assert settings.api_id == 12345678
+
+
+def test_settings_reads_proxy_url():
+    """Проверяет загрузку общего proxy URL из переменных окружения."""
+    env = {**BASE_ENV, "PROXY_URL": "http://user:pass@127.0.0.1:8080"}
+    with patch.dict(os.environ, env, clear=True):
+        from core.config import Settings
+
+        s = Settings()
+
+        assert s.proxy_url == "http://user:pass@127.0.0.1:8080"
+
+
+def test_settings_proxy_url_defaults_to_none():
+    """Проверяет, что proxy URL по умолчанию отключён."""
+    with patch.dict(os.environ, BASE_ENV, clear=True):
+        from core.config import Settings
+
+        s = Settings(_env_file=None)
+
+        assert s.proxy_url is None

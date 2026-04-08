@@ -39,18 +39,25 @@ class PromptLoader:
 class GeminiClient:
     """Клиент для генерации ответов через Google Gemini API."""
 
-    def __init__(self, api_key: str, model_name: str = "gemini-1.5-flash") -> None:
+    def __init__(
+        self,
+        api_key: str,
+        model_name: str = "gemini-2.5-flash",
+        proxy_url: str | None = None,
+    ) -> None:
         """
         Инициализирует клиент Gemini.
 
         Args:
             api_key: API ключ для доступа к Gemini.
             model_name: Название модели Gemini для генерации.
+            proxy_url: Общий proxy URL для Gemini API.
         """
         self.api_key = api_key
         self.model_name = model_name
-        self._model: Any | None = None
-        self._system_prompt: str | None = None
+        self.proxy_url = proxy_url
+        self._client: Any | None = None
+        self._types: Any | None = None
 
     async def generate_reply(
         self,
@@ -89,26 +96,40 @@ class GeminiClient:
 
     async def _generate_text(self, system_prompt: str, prompt: str) -> str:
         """Выполняет один вызов модели и нормализует ответ."""
-        model = self._get_model(system_prompt=system_prompt)
-        response = await asyncio.to_thread(model.generate_content, prompt)
+        client = self._get_client()
+        types_module = self._get_types_module()
+        config = types_module.GenerateContentConfig(system_instruction=system_prompt)
+        response = await asyncio.to_thread(
+            client.models.generate_content,
+            model=self.model_name,
+            contents=prompt,
+            config=config,
+        )
         text = getattr(response, "text", "")
         return str(text).strip()
 
-    def _get_model(self, system_prompt: str) -> Any:
-        """Ленивая инициализация Gemini-модели."""
-        if self._model is None or self._system_prompt != system_prompt:
-            try:
-                import google.generativeai as genai
-            except ImportError as exc:
-                raise RuntimeError("Пакет google-generativeai не установлен") from exc
+    def _get_client(self) -> Any:
+        """Ленивая инициализация клиента нового Gemini SDK."""
+        if self._client is None:
+            genai = _import_google_genai()
+            self._types = genai.types
 
-            genai.configure(api_key=self.api_key)
-            self._model = genai.GenerativeModel(
-                self.model_name,
-                system_instruction=system_prompt,
-            )
-            self._system_prompt = system_prompt
-        return self._model
+            client_kwargs: dict[str, Any] = {"api_key": self.api_key}
+            if self.proxy_url:
+                http_options = genai.types.HttpOptions(
+                    client_args={"proxy": self.proxy_url},
+                    async_client_args={"proxy": self.proxy_url},
+                )
+                client_kwargs["http_options"] = http_options
+
+            self._client = genai.Client(**client_kwargs)
+        return self._client
+
+    def _get_types_module(self) -> Any:
+        """Возвращает модуль типов из Gemini SDK."""
+        if self._types is None:
+            self._get_client()
+        return self._types
 
     @staticmethod
     def _render_history(history: list[dict[str, Any]]) -> str:
@@ -122,3 +143,13 @@ class GeminiClient:
             text = item.get("text", "")
             rendered_messages.append(f"{role}: {text}")
         return "История диалога:\n" + "\n".join(rendered_messages)
+
+
+def _import_google_genai() -> Any:
+    """Импортирует новый Gemini SDK и поднимает понятную ошибку при отсутствии пакета."""
+    try:
+        from google import genai
+    except ImportError as exc:
+        raise RuntimeError("Пакет google-genai не установлен") from exc
+
+    return genai

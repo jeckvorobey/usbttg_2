@@ -49,7 +49,10 @@ async def main() -> None:
     await whitelist.load()
 
     prompt_loader = PromptLoader(settings.prompts_dir)
-    gemini_client = GeminiClient(settings.gemini_api_key)
+    gemini_client = GeminiClient(
+        settings.gemini_api_key,
+        proxy_url=settings.proxy_url,
+    )
 
     topic_selector = TopicSelector(settings.topics_path)
     await topic_selector.load()
@@ -59,6 +62,7 @@ async def main() -> None:
         session_name=_build_session_path(settings.session_name),
         api_id=settings.api_id,
         api_hash=settings.api_hash,
+        proxy_url=settings.proxy_url,
     )
     await userbot_client.start()
 

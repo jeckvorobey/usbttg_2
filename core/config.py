@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     # Telethon сессия (имя файла без .session)
     session_name: str = "84523248603"
 
+    # Общий proxy URL для внешних подключений
+    proxy_url: str | None = None
+
     # Пути к файлам данных
     db_path: str = "data/history.db"
     whitelist_path: str = "data/whitelist.md"
