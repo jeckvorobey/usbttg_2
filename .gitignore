@@ -1,0 +1,71 @@
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+log/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment
+.env
+.env.*
+!.env.sample
+
+# Dependencies
+node_modules/
+bower_components/
+vendor/
+
+# Build outputs
+dist/
+build/
+out/
+coverage/
+tmp/
+temp/
+.cache/
+.parcel-cache/
+.turbo/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+pip-wheel-metadata/
+
+# Rust
+target/
+
+# Go
+bin/
+*.test
+
+# Java / Kotlin / Gradle
+.gradle/
+*.class
+
+# Misc generated files
+.codex
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.rar
