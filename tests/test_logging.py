@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from ai.gemini import GeminiClient, PromptLoader
+from ai.gemini import GeminiClient, GeminiTemporaryError, PromptLoader
 from ai.history import MessageHistory
 from userbot.handlers import WhitelistFilter, handle_new_message
 from userbot.scheduler import ConversationSession, TopicSelector
@@ -178,6 +178,42 @@ async def test_handle_new_message_logs_gemini_error_and_fallback(caplog):
 
     messages = [record.getMessage() for record in caplog.records]
     assert any("Ошибка генерации ответа для user_id=123" in message for message in messages)
+    event.respond.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_new_message_logs_temporary_gemini_unavailability(caplog):
+    """Проверяет, что временная недоступность Gemini логируется без traceback как warning."""
+    whitelist = WhitelistFilter(whitelist_path="unused")
+    whitelist.user_ids = {123}
+
+    history = SimpleNamespace(
+        get_history=AsyncMock(return_value=[{"role": "user", "text": "Предыдущее"}]),
+        save_message=AsyncMock(),
+    )
+    prompt_loader = SimpleNamespace(
+        load=AsyncMock(side_effect=["Системный промт", "Промт ответа"])
+    )
+    gemini_client = SimpleNamespace(
+        generate_reply=AsyncMock(side_effect=GeminiTemporaryError("503 UNAVAILABLE"))
+    )
+    event = SimpleNamespace(sender_id=123, raw_text="Привет", respond=AsyncMock())
+
+    with caplog.at_level(logging.WARNING):
+        await handle_new_message(
+            event=event,
+            whitelist=whitelist,
+            history=history,
+            prompt_loader=prompt_loader,
+            gemini_client=gemini_client,
+        )
+
+    temporary_records = [
+        record for record in caplog.records if "временно недоступен" in record.getMessage()
+    ]
+    assert temporary_records
+    assert all(record.levelno == logging.WARNING for record in temporary_records)
+    assert all(record.exc_info is None for record in temporary_records)
     event.respond.assert_awaited_once()
 
 

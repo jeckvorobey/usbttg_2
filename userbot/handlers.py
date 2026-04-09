@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from ai.gemini import GeminiClient, PromptLoader
+from ai.gemini import GeminiClient, GeminiGenerationError, GeminiTemporaryError, PromptLoader
 from ai.history import MessageHistory
 
 
@@ -114,6 +114,16 @@ async def handle_new_message(
             history=history_items,
             user_message=user_message,
         )
+    except GeminiTemporaryError as exc:
+        logger.warning("Gemini временно недоступен для user_id=%s: %s", sender_id, exc)
+        await _send_response(event, GENERATION_ERROR_REPLY)
+        logger.info("Пользователю user_id=%s отправлен fallback-ответ после ошибки генерации", sender_id)
+        return
+    except GeminiGenerationError as exc:
+        logger.error("Ошибка генерации ответа для user_id=%s: %s", sender_id, exc)
+        await _send_response(event, GENERATION_ERROR_REPLY)
+        logger.info("Пользователю user_id=%s отправлен fallback-ответ после ошибки генерации", sender_id)
+        return
     except Exception:
         logger.exception("Ошибка генерации ответа для user_id=%s", sender_id)
         await _send_response(event, GENERATION_ERROR_REPLY)

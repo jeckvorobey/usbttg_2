@@ -6,7 +6,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from ai.gemini import GeminiClient, PromptLoader
+from ai.gemini import GeminiClient, GeminiTemporaryError, PromptLoader
+
+
+@pytest.fixture(autouse=True)
+def inline_to_thread(monkeypatch):
+    """Подменяет asyncio.to_thread на синхронную заглушку для быстрых unit-тестов."""
+
+    async def fake_to_thread(func, /, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr("ai.gemini.asyncio.to_thread", fake_to_thread)
 
 
 async def test_prompt_loader_reads_md_file():
@@ -129,3 +139,106 @@ async def test_gemini_client_generate_reply_uses_system_instruction(monkeypatch)
         captured["generate_content_kwargs"]["config"].kwargs["system_instruction"]
         == "Системная роль"
     )
+
+
+@pytest.mark.asyncio
+async def test_gemini_client_retries_on_temporary_server_error(monkeypatch):
+    """Проверяет, что временная ошибка Gemini приводит к повторной попытке."""
+    attempts = {"count": 0}
+
+    class FakeServerError(Exception):
+        def __init__(self, status_code: int, message: str) -> None:
+            super().__init__(message)
+            self.status_code = status_code
+
+    class FakeModels:
+        def generate_content(self, **kwargs):
+            attempts["count"] += 1
+            if attempts["count"] < 3:
+                raise FakeServerError(503, "503 UNAVAILABLE")
+            return SimpleNamespace(text="Ответ после повтора")
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            self.models = FakeModels()
+
+    class FakeGenerateContentConfig:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+    fake_types = SimpleNamespace(GenerateContentConfig=FakeGenerateContentConfig)
+    fake_genai = SimpleNamespace(Client=FakeClient, types=fake_types)
+
+    delays: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr("ai.gemini._import_google_genai", lambda: fake_genai)
+    monkeypatch.setattr("ai.gemini.asyncio.sleep", fake_sleep)
+
+    client = GeminiClient(
+        api_key="test_key_123",
+        model_name="gemini-2.5-flash",
+        max_retries=3,
+        retry_backoff_seconds=0.5,
+    )
+
+    result = await client.generate_reply(
+        system_prompt="Системная роль",
+        history=[],
+        user_message="Привет",
+    )
+
+    assert result == "Ответ после повтора"
+    assert attempts["count"] == 3
+    assert delays == [0.5, 1.0]
+
+
+@pytest.mark.asyncio
+async def test_gemini_client_raises_temporary_error_after_retry_limit(monkeypatch):
+    """Проверяет, что после исчерпания повторов поднимается специализированная ошибка."""
+
+    class FakeServerError(Exception):
+        def __init__(self, status_code: int, message: str) -> None:
+            super().__init__(message)
+            self.status_code = status_code
+
+    class FakeModels:
+        def generate_content(self, **kwargs):
+            raise FakeServerError(503, "503 UNAVAILABLE")
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            self.models = FakeModels()
+
+    class FakeGenerateContentConfig:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+    fake_types = SimpleNamespace(GenerateContentConfig=FakeGenerateContentConfig)
+    fake_genai = SimpleNamespace(Client=FakeClient, types=fake_types)
+
+    delays: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr("ai.gemini._import_google_genai", lambda: fake_genai)
+    monkeypatch.setattr("ai.gemini.asyncio.sleep", fake_sleep)
+
+    client = GeminiClient(
+        api_key="test_key_123",
+        model_name="gemini-2.5-flash",
+        max_retries=2,
+        retry_backoff_seconds=0.5,
+    )
+
+    with pytest.raises(GeminiTemporaryError):
+        await client.generate_reply(
+            system_prompt="Системная роль",
+            history=[],
+            user_message="Привет",
+        )
+
+    assert delays == [0.5]
