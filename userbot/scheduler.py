@@ -1,9 +1,13 @@
 """Планировщик задач APScheduler и логика 30-минутных сессий разговора."""
 
-from datetime import datetime
 import asyncio
+import logging
 import random
+from datetime import datetime
 from pathlib import Path
+
+
+logger = logging.getLogger(__name__)
 
 
 class TopicSelector:
@@ -27,6 +31,7 @@ class TopicSelector:
         Пустые строки также игнорируются.
         """
         path = Path(self.topics_path)
+        logger.info("Загрузка тем разговора из %s", path)
         content = await asyncio.to_thread(path.read_text, encoding="utf-8")
         lines = [line.strip() for line in content.splitlines()]
 
@@ -36,6 +41,7 @@ class TopicSelector:
         self.topics = [
             line for line in lines if line and not line.startswith("#") and line != "---"
         ]
+        logger.info("Темы разговора загружены: %s", len(self.topics))
 
     async def pick_random(self) -> str:
         """
@@ -48,8 +54,11 @@ class TopicSelector:
             ValueError: Если список тем пуст (с сообщением 'Список тем пуст').
         """
         if not self.topics:
+            logger.error("Выбор темы невозможен: список тем пуст")
             raise ValueError("Список тем пуст")
-        return random.choice(self.topics)
+        topic = random.choice(self.topics)
+        logger.info("Выбрана тема разговора: %s", topic)
+        return topic
 
 
 class ConversationSession:
@@ -77,9 +86,11 @@ class ConversationSession:
         self.current_topic = topic
         self._start_time = datetime.now()
         self._active = True
+        logger.info("Сессия разговора запущена: topic=%s, duration_minutes=%s", topic, self.duration_minutes)
 
     def stop(self) -> None:
         """Досрочно останавливает текущую сессию."""
+        logger.info("Сессия разговора остановлена: topic=%s", self.current_topic)
         self.current_topic = None
         self._start_time = None
         self._active = False
@@ -96,6 +107,7 @@ class ConversationSession:
 
         elapsed_seconds = (datetime.now() - self._start_time).total_seconds()
         if elapsed_seconds >= self.duration_minutes * 60:
+            logger.info("Сессия разговора истекла по времени")
             self.stop()
             return False
         return True

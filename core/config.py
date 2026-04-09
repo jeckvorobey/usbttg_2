@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     # Общий proxy URL для внешних подключений
     proxy_url: str | None = None
 
+    # Уровень логирования приложения
+    log_level: str = "INFO"
+
     # Пути к файлам данных
     db_path: str = "data/history.db"
     whitelist_path: str = "data/whitelist.md"

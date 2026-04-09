@@ -98,3 +98,13 @@ def test_settings_proxy_url_defaults_to_none():
         s = Settings(_env_file=None)
 
         assert s.proxy_url is None
+
+
+def test_settings_log_level_defaults_to_info():
+    """Проверяет, что уровень логирования по умолчанию равен INFO."""
+    with patch.dict(os.environ, BASE_ENV, clear=True):
+        from core.config import Settings
+
+        s = Settings(_env_file=None)
+
+        assert s.log_level == "INFO"

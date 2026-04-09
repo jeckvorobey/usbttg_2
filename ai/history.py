@@ -1,8 +1,12 @@
 """Модуль хранения истории диалогов в SQLite через aiosqlite."""
 
+import logging
 from typing import Any
 
 import aiosqlite
+
+
+logger = logging.getLogger(__name__)
 
 
 class MessageHistory:
@@ -20,6 +24,7 @@ class MessageHistory:
 
     async def init_db(self) -> None:
         """Создаёт таблицу messages в базе данных, если она не существует."""
+        logger.info("Инициализация базы истории сообщений")
         connection = await self._get_connection()
         await connection.execute(
             """
@@ -33,6 +38,7 @@ class MessageHistory:
             """
         )
         await connection.commit()
+        logger.info("Таблица истории сообщений готова")
 
     async def save_message(self, user_id: int, role: str, text: str) -> None:
         """
@@ -43,12 +49,19 @@ class MessageHistory:
             role: Роль отправителя — 'user' или 'assistant'.
             text: Текст сообщения.
         """
+        logger.info(
+            "Сохранение сообщения в историю для user_id=%s, role=%s, длина=%s",
+            user_id,
+            role,
+            len(text),
+        )
         connection = await self._get_connection()
         await connection.execute(
             "INSERT INTO messages (user_id, role, text) VALUES (?, ?, ?)",
             (user_id, role, text),
         )
         await connection.commit()
+        logger.info("Сообщение сохранено в историю для user_id=%s", user_id)
 
     async def get_history(
         self, user_id: int, limit: int = 20
@@ -63,6 +76,7 @@ class MessageHistory:
         Returns:
             Список словарей с ключами 'role' и 'text', упорядоченных по времени.
         """
+        logger.info("Загрузка истории сообщений для user_id=%s с limit=%s", user_id, limit)
         connection = await self._get_connection()
         async with connection.execute(
             """
@@ -79,10 +93,13 @@ class MessageHistory:
             (user_id, limit),
         ) as cursor:
             rows = await cursor.fetchall()
-        return [{"role": row[0], "text": row[1]} for row in rows]
+        messages = [{"role": row[0], "text": row[1]} for row in rows]
+        logger.info("Загружена история сообщений для user_id=%s: %s записей", user_id, len(messages))
+        return messages
 
     async def _get_connection(self) -> aiosqlite.Connection:
         """Возвращает общее подключение к SQLite, необходимое для :memory:."""
         if self._connection is None:
+            logger.info("Открытие SQLite-соединения: %s", self.db_path)
             self._connection = await aiosqlite.connect(self.db_path)
         return self._connection
