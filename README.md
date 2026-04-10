@@ -95,6 +95,23 @@ uv run python run.py
 
 ## Запуск в фоне (постоянная работа)
 
+### Вариант 0 — Coolify
+
+В репозитории есть `Dockerfile` для деплоя как background worker.
+
+Что настроить в Coolify:
+
+- Тип сервиса: worker/background service, без публичного порта.
+- Build Pack: Dockerfile.
+- Persistent Volume: примонтировать в `/data`.
+- Environment Variables: передать `API_ID`, `API_HASH`, `GEMINI_API_KEY`, `SESSION_STRING` и при необходимости `GROUP_CHAT_ID`, `PROXY_URL`, `WHITELIST_USER_IDS`.
+
+Важно:
+
+- В контейнере по умолчанию используется `DB_PATH=/data/history.db`, чтобы SQLite переживал рестарты и перевыкатки.
+- `data/topics.md` и `ai/prompts/*.md` входят в образ, отдельный volume для них не нужен.
+- `.env` в образ не копируется, секреты нужно задавать через интерфейс Coolify.
+
 ### Вариант 1 — systemd (рекомендуется)
 
 Создать файл службы:
