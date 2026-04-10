@@ -3,11 +3,29 @@
 import asyncio
 import logging
 import random
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 
 logger = logging.getLogger(__name__)
+
+
+def is_dnd_active_utc(dnd_hours_utc: str | None, now_utc: datetime | None = None) -> bool:
+    """Проверяет, попадает ли текущее UTC-время в интервал режима не беспокоить."""
+    if not dnd_hours_utc:
+        return False
+
+    current_time = now_utc or datetime.now(UTC)
+    start_hour_str, end_hour_str = dnd_hours_utc.split("-", maxsplit=1)
+    start_hour = int(start_hour_str)
+    end_hour = int(end_hour_str)
+    current_hour = current_time.hour
+
+    if start_hour == end_hour:
+        return True
+    if start_hour < end_hour:
+        return start_hour <= current_hour < end_hour
+    return current_hour >= start_hour or current_hour < end_hour
 
 
 class TopicSelector:

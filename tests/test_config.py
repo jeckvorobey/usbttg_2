@@ -171,3 +171,28 @@ def test_settings_reads_gemini_resilience_options():
         assert s.gemini_max_retries == 4
         assert s.gemini_retry_backoff_seconds == 2.0
         assert s.gemini_retry_jitter_seconds == 0.4
+
+
+def test_settings_reads_dnd_hours_utc():
+    """Проверяет загрузку UTC-интервала режима не беспокоить."""
+    env = {**BASE_ENV, "DND_HOURS_UTC": "23-7"}
+    with patch.dict(os.environ, env, clear=True):
+        from core.config import Settings
+
+        s = Settings(_env_file=None)
+
+        assert s.dnd_hours_utc == "23-7"
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["24-7", "7-24", "aa-bb", "7", "7-", "-7", "7:00-8:00"],
+)
+def test_settings_rejects_invalid_dnd_hours_utc(value: str):
+    """Проверяет валидацию некорректного DND-интервала."""
+    env = {**BASE_ENV, "DND_HOURS_UTC": value}
+    with patch.dict(os.environ, env, clear=True):
+        from core.config import Settings
+
+        with pytest.raises(Exception):
+            Settings(_env_file=None)

@@ -2,10 +2,11 @@
 
 import os
 import tempfile
+from datetime import UTC, datetime
 
 import pytest
 
-from userbot.scheduler import ConversationSession, TopicSelector
+from userbot.scheduler import ConversationSession, TopicSelector, is_dnd_active_utc
 
 
 async def test_topic_selector_returns_topic_from_list():
@@ -142,3 +143,22 @@ def test_remaining_minutes_returns_zero_when_expired():
     session._start_time = session._start_time - timedelta(minutes=2)
     remaining = session.remaining_minutes()
     assert remaining == 0
+
+
+def test_is_dnd_active_utc_for_same_day_interval():
+    """Проверяет UTC-интервал DND внутри одних суток."""
+    assert is_dnd_active_utc("8-12", datetime(2026, 4, 10, 9, 0, tzinfo=UTC)) is True
+    assert is_dnd_active_utc("8-12", datetime(2026, 4, 10, 13, 0, tzinfo=UTC)) is False
+
+
+def test_is_dnd_active_utc_for_interval_across_midnight():
+    """Проверяет UTC-интервал DND с переходом через полночь."""
+    assert is_dnd_active_utc("23-7", datetime(2026, 4, 10, 23, 30, tzinfo=UTC)) is True
+    assert is_dnd_active_utc("23-7", datetime(2026, 4, 10, 6, 30, tzinfo=UTC)) is True
+    assert is_dnd_active_utc("23-7", datetime(2026, 4, 10, 12, 0, tzinfo=UTC)) is False
+
+
+def test_is_dnd_active_utc_for_full_day_interval():
+    """Проверяет, что одинаковые часы означают круглосуточный DND."""
+    assert is_dnd_active_utc("5-5", datetime(2026, 4, 10, 1, 0, tzinfo=UTC)) is True
+    assert is_dnd_active_utc("5-5", datetime(2026, 4, 10, 18, 0, tzinfo=UTC)) is True

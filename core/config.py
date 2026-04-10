@@ -4,7 +4,7 @@ import logging
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import BeforeValidator
+from pydantic import BeforeValidator, field_validator
 from pydantic_core import PydanticCustomError
 from pydantic import ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -84,6 +84,34 @@ class Settings(BaseSettings):
     silence_timeout_minutes: int = 60
     session_duration_minutes: int = 30
     group_chat_id: OptionalInt = None
+    dnd_hours_utc: str | None = None
+
+    @field_validator("dnd_hours_utc", mode="before")
+    @classmethod
+    def validate_dnd_hours_utc(cls, value: object) -> object:
+        """Проверяет формат UTC-интервала режима не беспокоить."""
+        value = _empty_str_to_none(value)
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return value
+
+        parts = value.split("-", maxsplit=1)
+        if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+            raise PydanticCustomError(
+                "invalid_dnd_hours_utc",
+                "DND_HOURS_UTC должен быть в формате HH-HH",
+            )
+
+        start_hour = int(parts[0])
+        end_hour = int(parts[1])
+        if not (0 <= start_hour <= 23 and 0 <= end_hour <= 23):
+            raise PydanticCustomError(
+                "invalid_dnd_hours_utc",
+                "Часы в DND_HOURS_UTC должны быть в диапазоне 0..23",
+            )
+
+        return f"{start_hour}-{end_hour}"
 
 
 @lru_cache(maxsize=1)

@@ -141,6 +141,7 @@ async def test_handle_new_message_logs_successful_processing(caplog):
     )
     gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ бота"))
     event = SimpleNamespace(sender_id=123, chat_id=-100555000111, raw_text="Привет", respond=AsyncMock())
+    session = SimpleNamespace(is_active=lambda: True, remaining_minutes=lambda: 6)
 
     with caplog.at_level(logging.INFO):
         await handle_new_message(
@@ -150,6 +151,7 @@ async def test_handle_new_message_logs_successful_processing(caplog):
             prompt_loader=prompt_loader,
             gemini_client=gemini_client,
             group_chat_id=-100555000111,
+            conversation_session=session,
         )
 
     messages = [record.getMessage() for record in caplog.records]
@@ -190,6 +192,7 @@ async def test_handle_new_message_logs_gemini_error_silently(caplog):
     )
     gemini_client = SimpleNamespace(generate_reply=AsyncMock(side_effect=RuntimeError("503 UNAVAILABLE")))
     event = SimpleNamespace(sender_id=123, raw_text="Привет", respond=AsyncMock())
+    session = SimpleNamespace(is_active=lambda: True, remaining_minutes=lambda: 6)
 
     with caplog.at_level(logging.ERROR):
         await handle_new_message(
@@ -198,6 +201,7 @@ async def test_handle_new_message_logs_gemini_error_silently(caplog):
             history=history,
             prompt_loader=prompt_loader,
             gemini_client=gemini_client,
+            conversation_session=session,
         )
 
     messages = [record.getMessage() for record in caplog.records]
@@ -221,6 +225,7 @@ async def test_handle_new_message_logs_temporary_gemini_unavailability(caplog):
         generate_reply=AsyncMock(side_effect=GeminiTemporaryError("503 UNAVAILABLE"))
     )
     event = SimpleNamespace(sender_id=123, raw_text="Привет", respond=AsyncMock())
+    session = SimpleNamespace(is_active=lambda: True, remaining_minutes=lambda: 6)
 
     with caplog.at_level(logging.WARNING):
         await handle_new_message(
@@ -229,6 +234,7 @@ async def test_handle_new_message_logs_temporary_gemini_unavailability(caplog):
             history=history,
             prompt_loader=prompt_loader,
             gemini_client=gemini_client,
+            conversation_session=session,
         )
 
     temporary_records = [
@@ -238,6 +244,35 @@ async def test_handle_new_message_logs_temporary_gemini_unavailability(caplog):
     assert all(record.levelno == logging.WARNING for record in temporary_records)
     assert all(record.exc_info is None for record in temporary_records)
     event.respond.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_new_message_logs_skip_when_session_inactive(caplog):
+    """Проверяет логирование пропуска сообщения при неактивной сессии."""
+    whitelist = WhitelistFilter(user_ids={123})
+
+    history = SimpleNamespace(
+        get_history=AsyncMock(return_value=[]),
+        save_message=AsyncMock(),
+    )
+    prompt_loader = SimpleNamespace(load=AsyncMock())
+    gemini_client = SimpleNamespace(generate_reply=AsyncMock())
+    event = SimpleNamespace(sender_id=123, chat_id=-100555000111, raw_text="Привет", respond=AsyncMock())
+    session = SimpleNamespace(is_active=lambda: False, remaining_minutes=lambda: None)
+
+    with caplog.at_level(logging.INFO):
+        await handle_new_message(
+            event=event,
+            whitelist=whitelist,
+            history=history,
+            prompt_loader=prompt_loader,
+            gemini_client=gemini_client,
+            group_chat_id=-100555000111,
+            conversation_session=session,
+        )
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("сессия разговора не активна" in message for message in messages)
 
 
 @pytest.mark.asyncio

@@ -3,7 +3,7 @@
 import asyncio
 import inspect
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -13,11 +13,16 @@ from core.config import load_settings_or_exit
 from core.logging import setup_logging
 from userbot.client import UserBotClient
 from userbot.handlers import WhitelistFilter, handle_new_message
-from userbot.scheduler import ConversationSession, SilenceWatcher, TopicSelector
+from userbot.scheduler import ConversationSession, SilenceWatcher, TopicSelector, is_dnd_active_utc
 
 
 logger = logging.getLogger(__name__)
 SILENCE_CHECK_INTERVAL_MINUTES = 10
+
+
+def _utc_now() -> datetime:
+    """Возвращает текущее время в UTC."""
+    return datetime.now(UTC)
 
 
 async def _sync_group_activity(
@@ -123,6 +128,7 @@ async def main() -> None:
         telegram_client.conversation_session = conversation_session
         telegram_client.silence_watcher = silence_watcher
         telegram_client.group_chat_id = settings.group_chat_id
+        telegram_client.dnd_hours_utc = settings.dnd_hours_utc
 
     scheduler = AsyncIOScheduler()
 
@@ -136,6 +142,9 @@ async def main() -> None:
             if conversation_session.is_active():
                 return
             await _sync_group_activity(telegram_client, settings.group_chat_id, silence_watcher)
+            if is_dnd_active_utc(settings.dnd_hours_utc, _utc_now()):
+                logger.info("Автозапуск разговора пропущен: активен режим не беспокоить")
+                return
             if not silence_watcher.is_silence_exceeded(settings.silence_timeout_minutes):
                 return
             if settings.group_chat_id is None:

@@ -4,11 +4,12 @@ import asyncio
 import inspect
 import logging
 import random
+from datetime import UTC, datetime
 from typing import Any
 
 from ai.gemini import GeminiClient, GeminiGenerationError, GeminiTemporaryError, PromptLoader
 from ai.history import MessageHistory
-from userbot.scheduler import SilenceWatcher
+from userbot.scheduler import SilenceWatcher, is_dnd_active_utc
 
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,8 @@ async def handle_new_message(
     silence_watcher: SilenceWatcher | None = None,
     conversation_session: object | None = None,
     group_chat_id: int | None = None,
+    dnd_hours_utc: str | None = None,
+    now_utc_factory: Any | None = None,
 ) -> None:
     """
     Обработчик входящего сообщения в группе.
@@ -71,6 +74,10 @@ async def handle_new_message(
     effective_group_chat_id = group_chat_id
     if effective_group_chat_id is None:
         effective_group_chat_id = getattr(telethon_client, "group_chat_id", None)
+    effective_dnd_hours_utc = dnd_hours_utc
+    if effective_dnd_hours_utc is None:
+        effective_dnd_hours_utc = getattr(telethon_client, "dnd_hours_utc", None)
+    utc_now = now_utc_factory() if callable(now_utc_factory) else datetime.now(UTC)
     if effective_group_chat_id is not None and chat_id != effective_group_chat_id:
         logger.info(
             "Сообщение от user_id=%s в chat_id=%s пропущено: чат не совпадает с целевой группой",
@@ -105,6 +112,22 @@ async def handle_new_message(
     if history is None or prompt_loader is None or gemini_client is None:
         logger.warning(
             "Сообщение от user_id=%s в chat_id=%s не обработано: отсутствуют runtime-зависимости",
+            sender_id,
+            chat_id,
+        )
+        return
+
+    if is_dnd_active_utc(effective_dnd_hours_utc, utc_now):
+        logger.info(
+            "Сообщение от user_id=%s в chat_id=%s пропущено: активен режим не беспокоить",
+            sender_id,
+            chat_id,
+        )
+        return
+
+    if conversation_session is None or not conversation_session.is_active():
+        logger.info(
+            "Сообщение от user_id=%s в chat_id=%s пропущено: сессия разговора не активна",
             sender_id,
             chat_id,
         )

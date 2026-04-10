@@ -1,5 +1,6 @@
 """Тесты для обработчиков сообщений и фильтра whitelist."""
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -55,7 +56,7 @@ async def test_whitelist_empty_allows_nobody():
 
 
 async def test_handle_new_message_replies_for_whitelisted_user():
-    """Проверяет, что обработчик генерирует и отправляет ответ разрешённому пользователю."""
+    """Проверяет, что обработчик отвечает только внутри активной сессии."""
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
@@ -67,12 +68,14 @@ async def test_handle_new_message_replies_for_whitelisted_user():
     )
     gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ бота"))
     event = SimpleNamespace(sender_id=123, raw_text="Привет", respond=AsyncMock())
+    session = SimpleNamespace(is_active=lambda: True, remaining_minutes=lambda: 6)
     await handle_new_message(
         event=event,
         whitelist=whitelist,
         history=history,
         prompt_loader=prompt_loader,
         gemini_client=gemini_client,
+        conversation_session=session,
     )
 
     gemini_client.generate_reply.assert_awaited_once()
@@ -112,12 +115,14 @@ async def test_handle_new_message_silent_on_gemini_error():
     )
     gemini_client = SimpleNamespace(generate_reply=AsyncMock(side_effect=RuntimeError("503 UNAVAILABLE")))
     event = SimpleNamespace(sender_id=123, raw_text="Привет", respond=AsyncMock())
+    session = SimpleNamespace(is_active=lambda: True, remaining_minutes=lambda: 6)
     await handle_new_message(
         event=event,
         whitelist=whitelist,
         history=history,
         prompt_loader=prompt_loader,
         gemini_client=gemini_client,
+        conversation_session=session,
     )
 
     gemini_client.generate_reply.assert_awaited_once()
@@ -138,12 +143,14 @@ async def test_handle_new_message_silent_on_temporary_gemini_error():
     )
     gemini_client = SimpleNamespace(generate_reply=AsyncMock(side_effect=GeminiTemporaryError("Gemini временно недоступен")))
     event = SimpleNamespace(sender_id=123, raw_text="Привет", respond=AsyncMock())
+    session = SimpleNamespace(is_active=lambda: True, remaining_minutes=lambda: 6)
     await handle_new_message(
         event=event,
         whitelist=whitelist,
         history=history,
         prompt_loader=prompt_loader,
         gemini_client=gemini_client,
+        conversation_session=session,
     )
 
     event.respond.assert_not_awaited()
@@ -212,7 +219,7 @@ async def test_wind_down_hint_not_included_when_time_is_enough():
 
 
 async def test_wind_down_hint_not_included_when_no_session():
-    """Проверяет, что при отсутствии сессии бот отвечает без wind-down hint."""
+    """Проверяет, что при отсутствии сессии бот не отвечает."""
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
@@ -234,15 +241,12 @@ async def test_wind_down_hint_not_included_when_no_session():
         conversation_session=None,
     )
 
-    gemini_client.generate_reply.assert_awaited_once()
-    event.respond.assert_awaited_once_with("Ответ")
-    call_args = gemini_client.generate_reply.call_args
-    system_prompt_used = call_args.kwargs.get("system_prompt") or call_args.args[0]
-    assert "Осталось" not in system_prompt_used
+    gemini_client.generate_reply.assert_not_awaited()
+    event.respond.assert_not_awaited()
+    history.get_history.assert_not_awaited()
 
-
-async def test_handle_new_message_replies_when_session_is_inactive():
-    """Проверяет, что неактивная сессия не мешает обычному ответу whitelist-пользователю."""
+async def test_handle_new_message_skips_when_session_is_inactive():
+    """Проверяет, что после окончания сессии бот замолкает."""
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
@@ -266,10 +270,42 @@ async def test_handle_new_message_replies_when_session_is_inactive():
     )
 
     silence_watcher.update_last_activity.assert_called_once_with()
-    gemini_client.generate_reply.assert_awaited_once()
-    event.respond.assert_awaited_once_with("Ответ")
-    history.get_history.assert_awaited_once()
-    assert history.save_message.await_count == 2
+    gemini_client.generate_reply.assert_not_awaited()
+    event.respond.assert_not_awaited()
+    history.get_history.assert_not_awaited()
+    history.save_message.assert_not_awaited()
+
+
+async def test_handle_new_message_skips_when_dnd_is_active():
+    """Проверяет, что в DND бот не отвечает даже при активной сессии."""
+    whitelist = WhitelistFilter(user_ids={123})
+
+    history = SimpleNamespace(
+        get_history=AsyncMock(return_value=[]),
+        save_message=AsyncMock(),
+    )
+    prompt_loader = SimpleNamespace(load=AsyncMock(side_effect=["Системный промт", "Промт ответа"]))
+    gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ"))
+    silence_watcher = SimpleNamespace(update_last_activity=Mock())
+    event = SimpleNamespace(sender_id=123, raw_text="Привет", respond=AsyncMock())
+    session = SimpleNamespace(is_active=lambda: True, remaining_minutes=lambda: 6)
+
+    await handle_new_message(
+        event=event,
+        whitelist=whitelist,
+        history=history,
+        prompt_loader=prompt_loader,
+        gemini_client=gemini_client,
+        silence_watcher=silence_watcher,
+        conversation_session=session,
+        dnd_hours_utc="23-7",
+        now_utc_factory=lambda: datetime(2026, 4, 10, 23, 30, tzinfo=UTC),
+    )
+
+    silence_watcher.update_last_activity.assert_called_once_with()
+    gemini_client.generate_reply.assert_not_awaited()
+    event.respond.assert_not_awaited()
+    history.get_history.assert_not_awaited()
 
 
 async def test_handle_new_message_ignores_other_group_chat():
@@ -319,6 +355,7 @@ async def test_handle_new_message_accepts_chat_id_from_event():
         raw_text="Привет",
         respond=AsyncMock(),
     )
+    session = SimpleNamespace(is_active=lambda: True, remaining_minutes=lambda: 6)
 
     await handle_new_message(
         event=event,
@@ -327,6 +364,7 @@ async def test_handle_new_message_accepts_chat_id_from_event():
         prompt_loader=prompt_loader,
         gemini_client=gemini_client,
         group_chat_id=-1009876543210,
+        conversation_session=session,
     )
 
     gemini_client.generate_reply.assert_awaited_once()

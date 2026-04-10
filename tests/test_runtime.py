@@ -1,6 +1,7 @@
 """Тесты runtime-слоя: клиент Telegram и точка входа."""
+from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -26,6 +27,8 @@ class FakeTelegramClient:
         self.disconnect = AsyncMock()
         self.run_until_disconnected = AsyncMock()
         self.add_event_handler = AsyncMock()
+        self.send_message = AsyncMock()
+        self.get_messages = AsyncMock(return_value=[])
         self.is_connected = lambda: True
 
 
@@ -398,6 +401,7 @@ async def test_main_binds_group_chat_id_to_telegram_client(monkeypatch):
     await run.main()
 
     assert fake_telegram_client.group_chat_id == -100555000111
+    assert fake_telegram_client.dnd_hours_utc is None
 
 
 @pytest.mark.asyncio
@@ -418,3 +422,107 @@ async def test_sync_group_activity_uses_latest_message_timestamp():
 
     assert silence_watcher.is_silence_exceeded(20) is True
     assert silence_watcher.is_silence_exceeded(30) is False
+
+
+@pytest.mark.asyncio
+async def test_main_binds_dnd_hours_utc_to_telegram_client(monkeypatch):
+    """Проверяет, что DND-интервал привязывается к runtime Telegram-клиента."""
+    import run
+
+    settings = Settings(
+        api_id=1,
+        api_hash="hash",
+        gemini_api_key="gemini-key",
+        session_string="session-string",
+        db_path=":memory:",
+        whitelist_user_ids="123456789",
+        topics_path="data/topics.md",
+        prompts_dir="ai/prompts",
+        dnd_hours_utc="23-7",
+    )
+
+    history = SimpleNamespace(init_db=AsyncMock())
+    whitelist = SimpleNamespace()
+    topic_selector = SimpleNamespace(load=AsyncMock())
+    fake_telegram_client = FakeTelegramClient("session-string", 1, "hash")
+    fake_userbot_client = SimpleNamespace(
+        start=AsyncMock(),
+        stop=AsyncMock(),
+        client=fake_telegram_client,
+    )
+
+    monkeypatch.setattr(run, "load_settings_or_exit", lambda: settings)
+    monkeypatch.setattr(run, "MessageHistory", lambda db_path: history)
+    monkeypatch.setattr(run, "WhitelistFilter", lambda user_ids: whitelist)
+    monkeypatch.setattr(run, "PromptLoader", lambda prompts_dir: object())
+    monkeypatch.setattr(run, "GeminiClient", lambda *args, **kwargs: SimpleNamespace())
+    monkeypatch.setattr(run, "TopicSelector", lambda topics_path: topic_selector)
+    monkeypatch.setattr(run, "ConversationSession", lambda duration_minutes=30: object())
+    monkeypatch.setattr(run, "AsyncIOScheduler", lambda: SimpleNamespace(add_job=lambda *a, **kw: None, start=lambda: None))
+    monkeypatch.setattr(run, "UserBotClient", lambda **kwargs: fake_userbot_client)
+    monkeypatch.setattr(run, "_register_handlers", AsyncMock())
+
+    await run.main()
+
+    assert fake_telegram_client.dnd_hours_utc == "23-7"
+
+
+@pytest.mark.asyncio
+async def test_silence_check_job_does_not_start_topic_during_dnd(monkeypatch):
+    """Проверяет, что DND блокирует автозапуск новой темы."""
+    import run
+
+    settings = Settings(
+        api_id=1,
+        api_hash="hash",
+        gemini_api_key="gemini-key",
+        session_string="session-string",
+        db_path=":memory:",
+        whitelist_user_ids="123456789",
+        topics_path="data/topics.md",
+        prompts_dir="ai/prompts",
+        scheduler_enabled=True,
+        group_chat_id=-100555000111,
+        dnd_hours_utc="23-7",
+    )
+
+    history = SimpleNamespace(init_db=AsyncMock())
+    whitelist = SimpleNamespace()
+    topic_selector = SimpleNamespace(load=AsyncMock(), pick_random=AsyncMock(return_value="Тема"))
+    prompt_loader = SimpleNamespace(load=AsyncMock(side_effect=["system", "start_topic"]))
+    gemini_client = SimpleNamespace(start_topic=AsyncMock(return_value="Сообщение по теме"))
+    fake_telegram_client = FakeTelegramClient("session-string", 1, "hash")
+    fake_userbot_client = SimpleNamespace(
+        start=AsyncMock(),
+        stop=AsyncMock(),
+        client=fake_telegram_client,
+    )
+    captured_jobs: list[object] = []
+    conversation_session = SimpleNamespace(
+        is_active=lambda: False,
+        start=Mock(),
+    )
+
+    def add_job(func, *_args, **_kwargs):
+        captured_jobs.append(func)
+
+    monkeypatch.setattr(run, "load_settings_or_exit", lambda: settings)
+    monkeypatch.setattr(run, "MessageHistory", lambda db_path: history)
+    monkeypatch.setattr(run, "WhitelistFilter", lambda user_ids: whitelist)
+    monkeypatch.setattr(run, "PromptLoader", lambda prompts_dir: prompt_loader)
+    monkeypatch.setattr(run, "GeminiClient", lambda *args, **kwargs: gemini_client)
+    monkeypatch.setattr(run, "TopicSelector", lambda topics_path: topic_selector)
+    monkeypatch.setattr(run, "ConversationSession", lambda duration_minutes=30: conversation_session)
+    monkeypatch.setattr(run, "AsyncIOScheduler", lambda: SimpleNamespace(add_job=add_job, start=lambda: None))
+    monkeypatch.setattr(run, "UserBotClient", lambda **kwargs: fake_userbot_client)
+    monkeypatch.setattr(run, "_register_handlers", AsyncMock())
+    monkeypatch.setattr(run, "_utc_now", lambda: datetime(2026, 4, 10, 23, 30, tzinfo=UTC))
+
+    await run.main()
+
+    silence_job = captured_jobs[1]
+    await silence_job()
+
+    topic_selector.pick_random.assert_not_awaited()
+    gemini_client.start_topic.assert_not_awaited()
+    fake_telegram_client.send_message.assert_not_awaited()
