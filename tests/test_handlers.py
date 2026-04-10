@@ -1,7 +1,7 @@
 """Тесты для обработчиков сообщений и фильтра whitelist."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -67,7 +67,6 @@ async def test_handle_new_message_replies_for_whitelisted_user():
     )
     gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ бота"))
     event = SimpleNamespace(sender_id=123, raw_text="Привет", respond=AsyncMock())
-
     await handle_new_message(
         event=event,
         whitelist=whitelist,
@@ -113,7 +112,6 @@ async def test_handle_new_message_silent_on_gemini_error():
     )
     gemini_client = SimpleNamespace(generate_reply=AsyncMock(side_effect=RuntimeError("503 UNAVAILABLE")))
     event = SimpleNamespace(sender_id=123, raw_text="Привет", respond=AsyncMock())
-
     await handle_new_message(
         event=event,
         whitelist=whitelist,
@@ -140,7 +138,6 @@ async def test_handle_new_message_silent_on_temporary_gemini_error():
     )
     gemini_client = SimpleNamespace(generate_reply=AsyncMock(side_effect=GeminiTemporaryError("Gemini временно недоступен")))
     event = SimpleNamespace(sender_id=123, raw_text="Привет", respond=AsyncMock())
-
     await handle_new_message(
         event=event,
         whitelist=whitelist,
@@ -153,8 +150,8 @@ async def test_handle_new_message_silent_on_temporary_gemini_error():
     history.save_message.assert_not_awaited()
 
 
-async def test_wind_down_hint_included_when_few_minutes_remain():
-    """Проверяет, что wind-down hint добавляется в промт когда осталось ≤5 минут."""
+async def test_wind_down_hint_included_when_two_minutes_remain():
+    """Проверяет, что wind-down hint добавляется в промт когда осталось 2 минуты."""
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
@@ -167,7 +164,7 @@ async def test_wind_down_hint_included_when_few_minutes_remain():
     gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ"))
     event = SimpleNamespace(sender_id=123, raw_text="Привет", respond=AsyncMock())
 
-    session = SimpleNamespace(remaining_minutes=lambda: 3)
+    session = SimpleNamespace(is_active=lambda: True, remaining_minutes=lambda: 2)
 
     await handle_new_message(
         event=event,
@@ -180,11 +177,11 @@ async def test_wind_down_hint_included_when_few_minutes_remain():
 
     call_args = gemini_client.generate_reply.call_args
     system_prompt_used = call_args.kwargs.get("system_prompt") or call_args.args[0]
-    assert "Осталось 3 мин." in system_prompt_used
+    assert "Осталось 2 мин." in system_prompt_used
 
 
 async def test_wind_down_hint_not_included_when_time_is_enough():
-    """Проверяет, что wind-down hint не добавляется когда времени больше 5 минут."""
+    """Проверяет, что wind-down hint не добавляется когда времени больше 2 минут."""
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
@@ -197,7 +194,7 @@ async def test_wind_down_hint_not_included_when_time_is_enough():
     gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ"))
     event = SimpleNamespace(sender_id=123, raw_text="Привет", respond=AsyncMock())
 
-    session = SimpleNamespace(remaining_minutes=lambda: 15)
+    session = SimpleNamespace(is_active=lambda: True, remaining_minutes=lambda: 3)
 
     await handle_new_message(
         event=event,
@@ -215,7 +212,7 @@ async def test_wind_down_hint_not_included_when_time_is_enough():
 
 
 async def test_wind_down_hint_not_included_when_no_session():
-    """Проверяет, что при отсутствии сессии wind-down hint не добавляется."""
+    """Проверяет, что при отсутствии сессии бот отвечает без wind-down hint."""
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
@@ -238,9 +235,70 @@ async def test_wind_down_hint_not_included_when_no_session():
     )
 
     gemini_client.generate_reply.assert_awaited_once()
+    event.respond.assert_awaited_once_with("Ответ")
     call_args = gemini_client.generate_reply.call_args
     system_prompt_used = call_args.kwargs.get("system_prompt") or call_args.args[0]
     assert "Осталось" not in system_prompt_used
+
+
+async def test_handle_new_message_replies_when_session_is_inactive():
+    """Проверяет, что неактивная сессия не мешает обычному ответу whitelist-пользователю."""
+    whitelist = WhitelistFilter(user_ids={123})
+
+    history = SimpleNamespace(
+        get_history=AsyncMock(return_value=[]),
+        save_message=AsyncMock(),
+    )
+    prompt_loader = SimpleNamespace(load=AsyncMock(side_effect=["Системный промт", "Промт ответа"]))
+    gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ"))
+    silence_watcher = SimpleNamespace(update_last_activity=Mock())
+    event = SimpleNamespace(sender_id=123, raw_text="Привет", respond=AsyncMock())
+    session = SimpleNamespace(is_active=lambda: False, remaining_minutes=lambda: None)
+
+    await handle_new_message(
+        event=event,
+        whitelist=whitelist,
+        history=history,
+        prompt_loader=prompt_loader,
+        gemini_client=gemini_client,
+        silence_watcher=silence_watcher,
+        conversation_session=session,
+    )
+
+    silence_watcher.update_last_activity.assert_called_once_with()
+    gemini_client.generate_reply.assert_awaited_once()
+    event.respond.assert_awaited_once_with("Ответ")
+    history.get_history.assert_awaited_once()
+    assert history.save_message.await_count == 2
+
+
+async def test_handle_new_message_ignores_other_group_chat():
+    """Проверяет, что сообщения из другого чата не учитываются и не обрабатываются."""
+    whitelist = WhitelistFilter(user_ids={123})
+
+    history = SimpleNamespace(
+        get_history=AsyncMock(return_value=[]),
+        save_message=AsyncMock(),
+    )
+    prompt_loader = SimpleNamespace(load=AsyncMock())
+    gemini_client = SimpleNamespace(generate_reply=AsyncMock())
+    silence_watcher = SimpleNamespace(update_last_activity=Mock())
+    event = SimpleNamespace(sender_id=123, chat_id=-100999, raw_text="Привет", respond=AsyncMock())
+
+    await handle_new_message(
+        event=event,
+        whitelist=whitelist,
+        history=history,
+        prompt_loader=prompt_loader,
+        gemini_client=gemini_client,
+        silence_watcher=silence_watcher,
+        group_chat_id=-100555,
+    )
+
+    silence_watcher.update_last_activity.assert_not_called()
+    gemini_client.generate_reply.assert_not_awaited()
+    event.respond.assert_not_awaited()
+    history.get_history.assert_not_awaited()
 
 
 async def test_handle_new_message_accepts_chat_id_from_event():
@@ -268,6 +326,7 @@ async def test_handle_new_message_accepts_chat_id_from_event():
         history=history,
         prompt_loader=prompt_loader,
         gemini_client=gemini_client,
+        group_chat_id=-1009876543210,
     )
 
     gemini_client.generate_reply.assert_awaited_once()

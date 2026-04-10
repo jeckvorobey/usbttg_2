@@ -149,6 +149,7 @@ async def test_handle_new_message_logs_successful_processing(caplog):
             history=history,
             prompt_loader=prompt_loader,
             gemini_client=gemini_client,
+            group_chat_id=-100555000111,
         )
 
     messages = [record.getMessage() for record in caplog.records]

@@ -50,6 +50,7 @@ async def handle_new_message(
     gemini_client: GeminiClient | None = None,
     silence_watcher: SilenceWatcher | None = None,
     conversation_session: object | None = None,
+    group_chat_id: int | None = None,
 ) -> None:
     """
     Обработчик входящего сообщения в группе.
@@ -66,8 +67,19 @@ async def handle_new_message(
         return
     chat_id = _extract_chat_id(event)
 
-    # Фиксируем активность для любого сообщения — до проверки whitelist
     telethon_client = getattr(event, "client", None)
+    effective_group_chat_id = group_chat_id
+    if effective_group_chat_id is None:
+        effective_group_chat_id = getattr(telethon_client, "group_chat_id", None)
+    if effective_group_chat_id is not None and chat_id != effective_group_chat_id:
+        logger.info(
+            "Сообщение от user_id=%s в chat_id=%s пропущено: чат не совпадает с целевой группой",
+            sender_id,
+            chat_id,
+        )
+        return
+
+    # Фиксируем активность только для целевой группы — до проверки whitelist
     _sw = silence_watcher or getattr(telethon_client, "silence_watcher", None)
     if _sw is not None:
         _sw.update_last_activity()
@@ -108,9 +120,9 @@ async def handle_new_message(
     system_prompt = await prompt_loader.load("system")
     reply_prompt = await prompt_loader.load("reply")
     wind_down_hint = ""
-    if conversation_session is not None:
+    if conversation_session is not None and conversation_session.is_active():
         remaining = conversation_session.remaining_minutes()
-        if remaining is not None and remaining <= 5:
+        if remaining is not None and remaining <= 2:
             hint_template = await prompt_loader.load("wind_down_hint")
             wind_down_hint = hint_template.format(remaining=remaining)
             logger.info(

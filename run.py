@@ -3,6 +3,7 @@
 import asyncio
 import inspect
 import logging
+from datetime import datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -16,6 +17,36 @@ from userbot.scheduler import ConversationSession, SilenceWatcher, TopicSelector
 
 
 logger = logging.getLogger(__name__)
+SILENCE_CHECK_INTERVAL_MINUTES = 10
+
+
+async def _sync_group_activity(
+    telegram_client: object | None,
+    group_chat_id: int | None,
+    silence_watcher: SilenceWatcher,
+) -> None:
+    """Синхронизирует время последней активности по последнему сообщению в группе."""
+    if telegram_client is None or group_chat_id is None:
+        return
+
+    get_messages = getattr(telegram_client, "get_messages", None)
+    if get_messages is None:
+        return
+
+    result = get_messages(group_chat_id, limit=1)
+    if inspect.isawaitable(result):
+        result = await result
+
+    last_message = None
+    if isinstance(result, list):
+        if result:
+            last_message = result[0]
+    else:
+        last_message = result
+
+    message_date = getattr(last_message, "date", None)
+    if isinstance(message_date, datetime):
+        silence_watcher.update_last_activity(message_date)
 
 
 async def _register_handlers(userbot_client: UserBotClient, whitelist: WhitelistFilter) -> None:
@@ -91,6 +122,7 @@ async def main() -> None:
         telegram_client.topic_selector = topic_selector
         telegram_client.conversation_session = conversation_session
         telegram_client.silence_watcher = silence_watcher
+        telegram_client.group_chat_id = settings.group_chat_id
 
     scheduler = AsyncIOScheduler()
 
@@ -100,9 +132,10 @@ async def main() -> None:
             conversation_session.is_active()
 
         async def _silence_check_job() -> None:
-            """Инициирует разговор после тишины — запускается каждые SILENCE_TIMEOUT_MINUTES."""
+            """Инициирует разговор после тишины — запускается каждые 10 минут."""
             if conversation_session.is_active():
                 return
+            await _sync_group_activity(telegram_client, settings.group_chat_id, silence_watcher)
             if not silence_watcher.is_silence_exceeded(settings.silence_timeout_minutes):
                 return
             if settings.group_chat_id is None:
@@ -126,9 +159,10 @@ async def main() -> None:
                 logger.exception("Ошибка при инициации разговора по расписанию")
 
         scheduler.add_job(_session_expiry_job, "interval", minutes=1)
-        scheduler.add_job(_silence_check_job, "interval", minutes=settings.silence_timeout_minutes)
+        scheduler.add_job(_silence_check_job, "interval", minutes=SILENCE_CHECK_INTERVAL_MINUTES)
         logger.info(
-            "Планировщик активен: проверка тишины каждые %s мин, сессия до %s мин",
+            "Планировщик активен: проверка тишины каждые %s мин, порог тишины %s мин, сессия до %s мин",
+            SILENCE_CHECK_INTERVAL_MINUTES,
             settings.silence_timeout_minutes,
             settings.session_duration_minutes,
         )

@@ -293,3 +293,128 @@ def test_build_telegram_client_rejects_blank_session_string():
 
     with pytest.raises(ValueError, match="SESSION_STRING"):
         _build_telegram_client("   ", 1, "hash")
+
+
+@pytest.mark.asyncio
+async def test_main_schedules_silence_checks_every_ten_minutes(monkeypatch):
+    """Проверяет, что проверка тишины запускается каждые 10 минут."""
+    import run
+
+    settings = Settings(
+        api_id=1,
+        api_hash="hash",
+        gemini_api_key="gemini-key",
+        session_string="session-string",
+        db_path=":memory:",
+        whitelist_user_ids="123456789",
+        topics_path="data/topics.md",
+        prompts_dir="ai/prompts",
+        scheduler_enabled=True,
+        silence_timeout_minutes=60,
+    )
+
+    history = SimpleNamespace(init_db=AsyncMock())
+    whitelist = SimpleNamespace()
+    topic_selector = SimpleNamespace(load=AsyncMock())
+    fake_telegram_client = FakeTelegramClient("session-string", 1, "hash")
+    fake_userbot_client = SimpleNamespace(
+        start=AsyncMock(),
+        stop=AsyncMock(),
+        client=fake_telegram_client,
+    )
+    add_job_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def add_job(*args, **kwargs):
+        add_job_calls.append((args, kwargs))
+
+    monkeypatch.setattr(run, "load_settings_or_exit", lambda: settings)
+    monkeypatch.setattr(run, "MessageHistory", lambda db_path: history)
+    monkeypatch.setattr(run, "WhitelistFilter", lambda user_ids: whitelist)
+    monkeypatch.setattr(run, "PromptLoader", lambda prompts_dir: object())
+    monkeypatch.setattr(run, "GeminiClient", lambda *args, **kwargs: SimpleNamespace())
+    monkeypatch.setattr(run, "TopicSelector", lambda topics_path: topic_selector)
+    monkeypatch.setattr(
+        run,
+        "ConversationSession",
+        lambda duration_minutes=30: SimpleNamespace(is_active=lambda: False),
+    )
+    monkeypatch.setattr(
+        run,
+        "AsyncIOScheduler",
+        lambda: SimpleNamespace(add_job=add_job, start=lambda: None),
+    )
+    monkeypatch.setattr(run, "UserBotClient", lambda **kwargs: fake_userbot_client)
+    monkeypatch.setattr(run, "_register_handlers", AsyncMock())
+
+    await run.main()
+
+    assert len(add_job_calls) == 2
+    session_job_args, session_job_kwargs = add_job_calls[0]
+    silence_job_args, silence_job_kwargs = add_job_calls[1]
+    assert session_job_args[1] == "interval"
+    assert session_job_kwargs["minutes"] == 1
+    assert silence_job_args[1] == "interval"
+    assert silence_job_kwargs["minutes"] == 10
+
+
+@pytest.mark.asyncio
+async def test_main_binds_group_chat_id_to_telegram_client(monkeypatch):
+    """Проверяет, что целевой chat_id группы передаётся в runtime Telegram-клиента."""
+    import run
+
+    settings = Settings(
+        api_id=1,
+        api_hash="hash",
+        gemini_api_key="gemini-key",
+        session_string="session-string",
+        db_path=":memory:",
+        whitelist_user_ids="123456789",
+        topics_path="data/topics.md",
+        prompts_dir="ai/prompts",
+        group_chat_id=-100555000111,
+    )
+
+    history = SimpleNamespace(init_db=AsyncMock())
+    whitelist = SimpleNamespace()
+    topic_selector = SimpleNamespace(load=AsyncMock())
+    fake_telegram_client = FakeTelegramClient("session-string", 1, "hash")
+    fake_userbot_client = SimpleNamespace(
+        start=AsyncMock(),
+        stop=AsyncMock(),
+        client=fake_telegram_client,
+    )
+
+    monkeypatch.setattr(run, "load_settings_or_exit", lambda: settings)
+    monkeypatch.setattr(run, "MessageHistory", lambda db_path: history)
+    monkeypatch.setattr(run, "WhitelistFilter", lambda user_ids: whitelist)
+    monkeypatch.setattr(run, "PromptLoader", lambda prompts_dir: object())
+    monkeypatch.setattr(run, "GeminiClient", lambda *args, **kwargs: SimpleNamespace())
+    monkeypatch.setattr(run, "TopicSelector", lambda topics_path: topic_selector)
+    monkeypatch.setattr(run, "ConversationSession", lambda duration_minutes=30: object())
+    monkeypatch.setattr(run, "AsyncIOScheduler", lambda: SimpleNamespace(add_job=lambda *a, **kw: None, start=lambda: None))
+    monkeypatch.setattr(run, "UserBotClient", lambda **kwargs: fake_userbot_client)
+    monkeypatch.setattr(run, "_register_handlers", AsyncMock())
+
+    await run.main()
+
+    assert fake_telegram_client.group_chat_id == -100555000111
+
+
+@pytest.mark.asyncio
+async def test_sync_group_activity_uses_latest_message_timestamp():
+    """Проверяет, что время последнего сообщения группы синхронизируется в SilenceWatcher."""
+    from datetime import datetime, timedelta
+
+    import run
+    from userbot.scheduler import SilenceWatcher
+
+    message_time = datetime.now() - timedelta(minutes=25)
+    telegram_client = SimpleNamespace(
+        get_messages=AsyncMock(return_value=[SimpleNamespace(date=message_time)])
+    )
+    silence_watcher = SilenceWatcher()
+
+    await run._sync_group_activity(telegram_client, -100555000111, silence_watcher)
+
+    assert silence_watcher.is_silence_exceeded(20) is True
+    assert silence_watcher.is_silence_exceeded(30) is False
