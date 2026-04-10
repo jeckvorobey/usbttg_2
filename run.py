@@ -66,7 +66,7 @@ async def main() -> None:
     topic_selector = TopicSelector(settings.topics_path)
     logger.info("Загрузка списка тем из %s", settings.topics_path)
     await topic_selector.load()
-    conversation_session = ConversationSession()
+    conversation_session = ConversationSession(duration_minutes=settings.session_duration_minutes)
     silence_watcher = SilenceWatcher()
 
     userbot_client = UserBotClient(

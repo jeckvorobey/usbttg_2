@@ -70,6 +70,7 @@ async def handle_new_message(
     prompt_loader: PromptLoader | None = None,
     gemini_client: GeminiClient | None = None,
     silence_watcher: SilenceWatcher | None = None,
+    conversation_session: object | None = None,
 ) -> None:
     """
     Обработчик входящего сообщения в группе.
@@ -109,6 +110,7 @@ async def handle_new_message(
     history = history or getattr(telethon_client, "message_history", None)
     prompt_loader = prompt_loader or getattr(telethon_client, "prompt_loader", None)
     gemini_client = gemini_client or getattr(telethon_client, "gemini_client", None)
+    conversation_session = conversation_session or getattr(telethon_client, "conversation_session", None)
     if history is None or prompt_loader is None or gemini_client is None:
         logger.warning(
             "Сообщение от user_id=%s в chat_id=%s не обработано: отсутствуют runtime-зависимости",
@@ -126,10 +128,22 @@ async def handle_new_message(
     )
     system_prompt = await prompt_loader.load("system")
     reply_prompt = await prompt_loader.load("reply")
+    wind_down_hint = ""
+    if conversation_session is not None:
+        remaining = conversation_session.remaining_minutes()
+        if remaining is not None and remaining <= 5:
+            hint_template = await prompt_loader.load("wind_down_hint")
+            wind_down_hint = hint_template.format(remaining=remaining)
+            logger.info(
+                "Wind-down hint активирован для user_id=%s: осталось %s мин", sender_id, remaining
+            )
     logger.info("Промты для ответа user_id=%s в chat_id=%s загружены", sender_id, chat_id)
+    full_prompt = f"{system_prompt}\n\n{reply_prompt}"
+    if wind_down_hint:
+        full_prompt = f"{full_prompt}\n\n{wind_down_hint}"
     try:
         reply_text = await gemini_client.generate_reply(
-            system_prompt=f"{system_prompt}\n\n{reply_prompt}",
+            system_prompt=full_prompt,
             history=history_items,
             user_message=user_message,
         )
@@ -197,7 +211,7 @@ async def _send_response(event: object, text: str) -> None:
     Если входящее сообщение само является reply — отвечает с цитатой (reply),
     иначе отправляет обычное сообщение в чат (respond).
     """
-    delay = random.uniform(30, 90)
+    delay = random.uniform(10, 30)
     logger.info("Задержка перед отправкой ответа: %.1f сек", delay)
     await asyncio.sleep(delay)
 

@@ -127,6 +127,20 @@ class ConversationSession:
         self._start_time = None
         self._active = False
 
+    def remaining_minutes(self) -> int | None:
+        """
+        Возвращает оставшееся время сессии в минутах.
+
+        Returns:
+            Количество оставшихся полных минут, 0 если время истекло,
+            или None если сессия не активна.
+        """
+        if not self._active or self._start_time is None:
+            return None
+        elapsed = (datetime.now() - self._start_time).total_seconds()
+        remaining = self.duration_minutes * 60 - elapsed
+        return max(0, int(remaining // 60))
+
     def is_active(self) -> bool:
         """
         Проверяет, активна ли сессия (запущена и не истекла по времени).

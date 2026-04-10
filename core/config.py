@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     # Планировщик разговоров
     scheduler_enabled: bool = True
     silence_timeout_minutes: int = 60
+    session_duration_minutes: int = 30
     group_chat_id: OptionalInt = None
 
 
