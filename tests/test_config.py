@@ -1,5 +1,6 @@
 """Тесты для модуля настроек приложения."""
 
+import logging
 import os
 from unittest.mock import patch
 
@@ -11,6 +12,7 @@ BASE_ENV = {
     "API_ID": "12345678",
     "API_HASH": "test_api_hash_abc",
     "GEMINI_API_KEY": "test_gemini_key_xyz",
+    "SESSION_STRING": "test-session-string",
 }
 
 
@@ -25,23 +27,14 @@ def test_settings_loads_required_fields():
         assert s.gemini_api_key == "test_gemini_key_xyz"
 
 
-def test_settings_default_session_name():
-    """Проверяет, что имя сессии по умолчанию равно '84523248603'."""
-    with patch.dict(os.environ, BASE_ENV, clear=True):
-        from core.config import Settings
-
-        s = Settings()
-        assert s.session_name == "84523248603"
-
-
-def test_settings_override_session_name():
-    """Проверяет, что имя сессии можно переопределить через переменную окружения."""
-    env = {**BASE_ENV, "SESSION_NAME": "другая_сессия"}
+def test_settings_reads_session_string():
+    """Проверяет, что строковая сессия загружается из переменной окружения."""
+    env = {**BASE_ENV}
     with patch.dict(os.environ, env, clear=True):
         from core.config import Settings
 
         s = Settings()
-        assert s.session_name == "другая_сессия"
+        assert s.session_string == "test-session-string"
 
 
 def test_settings_missing_required_field_raises():
@@ -49,12 +42,62 @@ def test_settings_missing_required_field_raises():
     env_without_api_id = {
         "API_HASH": "test_hash",
         "GEMINI_API_KEY": "test_key",
+        "SESSION_STRING": "test-session-string",
     }
     with patch.dict(os.environ, env_without_api_id, clear=True):
         from core.config import Settings
 
         with pytest.raises(Exception):
             Settings(_env_file=None)
+
+
+def test_settings_missing_session_string_raises():
+    """Проверяет, что отсутствие строковой сессии вызывает исключение."""
+    env_without_session_string = {
+        "API_ID": "12345678",
+        "API_HASH": "test_hash",
+        "GEMINI_API_KEY": "test_key",
+    }
+    with patch.dict(os.environ, env_without_session_string, clear=True):
+        from core.config import Settings
+
+        with pytest.raises(Exception):
+            Settings(_env_file=None)
+
+
+def test_settings_rejects_empty_session_string():
+    """Проверяет, что пустая строковая сессия отклоняется валидацией."""
+    env = {
+        "API_ID": "12345678",
+        "API_HASH": "test_hash",
+        "GEMINI_API_KEY": "test_key",
+        "SESSION_STRING": "   ",
+    }
+    with patch.dict(os.environ, env, clear=True):
+        from core.config import Settings
+
+        with pytest.raises(Exception):
+            Settings(_env_file=None)
+
+
+def test_load_settings_or_exit_logs_validation_error(monkeypatch, caplog, tmp_path):
+    """Проверяет, что ошибка конфигурации логируется перед остановкой."""
+    env_without_session_string = {
+        "API_ID": "12345678",
+        "API_HASH": "test_hash",
+        "GEMINI_API_KEY": "test_key",
+    }
+    with patch.dict(os.environ, env_without_session_string, clear=True):
+        from core.config import get_settings, load_settings_or_exit
+
+        monkeypatch.chdir(tmp_path)
+        get_settings.cache_clear()
+        with caplog.at_level(logging.CRITICAL):
+            with pytest.raises(SystemExit, match="1"):
+                load_settings_or_exit()
+
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("Ошибка конфигурации окружения" in message for message in messages)
 
 
 def test_settings_has_db_path():

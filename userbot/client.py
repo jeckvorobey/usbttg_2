@@ -14,7 +14,7 @@ class UserBotClient:
 
     def __init__(
         self,
-        session_name: str,
+        session_string: str,
         api_id: int,
         api_hash: str,
         proxy_url: str | None = None,
@@ -23,12 +23,12 @@ class UserBotClient:
         Инициализирует Telethon клиент.
 
         Args:
-            session_name: Имя файла сессии (без расширения .session).
+            session_string: Строковая Telethon-сессия.
             api_id: Telegram API ID (получить на https://my.telegram.org).
             api_hash: Telegram API Hash.
             proxy_url: URL proxy для подключения к Telegram.
         """
-        self.session_name = session_name
+        self.session_string = session_string
         self.api_id = api_id
         self.api_hash = api_hash
         self.proxy_url = proxy_url
@@ -37,9 +37,9 @@ class UserBotClient:
     async def start(self) -> None:
         """Запускает клиент и устанавливает подключение к Telegram."""
         if self._client is None:
-            logger.info("Создание Telegram-клиента для сессии %s", self.session_name)
+            logger.info("Создание Telegram-клиента из строковой сессии")
             self._client = _build_telegram_client(
-                self.session_name,
+                self.session_string,
                 self.api_id,
                 self.api_hash,
                 proxy=_build_proxy_settings(self.proxy_url),
@@ -107,19 +107,24 @@ class UserBotClient:
 
 
 def _build_telegram_client(
-    session_name: str,
+    session_string: str,
     api_id: int,
     api_hash: str,
     proxy: dict[str, Any] | None = None,
 ) -> Any:
     """Создаёт экземпляр TelegramClient с ленивым импортом Telethon."""
+    normalized_session_string = session_string.strip()
+    if not normalized_session_string:
+        raise ValueError("SESSION_STRING не должен быть пустым")
+
     try:
         from telethon import TelegramClient
+        from telethon.sessions import StringSession
     except ImportError as exc:
         raise RuntimeError("Пакет telethon не установлен") from exc
 
     logger.debug("Экземпляр TelegramClient создаётся через Telethon")
-    return TelegramClient(session_name, api_id, api_hash, proxy=proxy)
+    return TelegramClient(StringSession(normalized_session_string), api_id, api_hash, proxy=proxy)
 
 
 def _build_proxy_settings(proxy_url: str | None) -> dict[str, Any] | None:

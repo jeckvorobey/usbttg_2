@@ -90,7 +90,7 @@ async def test_userbot_client_update_profile_requests(monkeypatch):
 
     monkeypatch.setattr(
         "userbot.client._build_telegram_client",
-        lambda session_name, api_id, api_hash, proxy=None: fake_client,
+        lambda session_string, api_id, api_hash, proxy=None: fake_client,
     )
     monkeypatch.setattr(
         "userbot.client._import_telethon_profile_requests",
@@ -101,7 +101,7 @@ async def test_userbot_client_update_profile_requests(monkeypatch):
         ),
     )
 
-    client = UserBotClient(session_name="session", api_id=1, api_hash="hash")
+    client = UserBotClient(session_string="session-string", api_id=1, api_hash="hash")
     await client.start()
     await client.update_profile(first_name="Иван", last_name="Петров")
 
@@ -121,7 +121,7 @@ async def test_userbot_client_update_avatar_uploads_file(monkeypatch, tmp_path):
 
     monkeypatch.setattr(
         "userbot.client._build_telegram_client",
-        lambda session_name, api_id, api_hash, proxy=None: fake_client,
+        lambda session_string, api_id, api_hash, proxy=None: fake_client,
     )
     monkeypatch.setattr(
         "userbot.client._import_telethon_profile_requests",
@@ -132,7 +132,7 @@ async def test_userbot_client_update_avatar_uploads_file(monkeypatch, tmp_path):
         ),
     )
 
-    client = UserBotClient(session_name="session", api_id=1, api_hash="hash")
+    client = UserBotClient(session_string="session-string", api_id=1, api_hash="hash")
     await client.start()
     await client.update_avatar(avatar)
 
@@ -166,12 +166,12 @@ async def test_main_reports_partial_failure_and_logs_final_user(monkeypatch, cap
 
     monkeypatch.setattr(
         update_profile,
-        "get_settings",
+        "load_settings_or_exit",
         lambda: Settings(
             api_id=1,
             api_hash="hash",
             gemini_api_key="gemini-key",
-            session_name="84523248603",
+            session_string="session-string",
             proxy_url=None,
         ),
     )
@@ -210,12 +210,12 @@ async def test_main_returns_zero_when_nothing_selected(monkeypatch):
 
     monkeypatch.setattr(
         update_profile,
-        "get_settings",
+        "load_settings_or_exit",
         lambda: Settings(
             api_id=1,
             api_hash="hash",
             gemini_api_key="gemini-key",
-            session_name="84523248603",
+            session_string="session-string",
             proxy_url=None,
         ),
     )

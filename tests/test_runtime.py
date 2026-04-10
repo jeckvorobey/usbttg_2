@@ -1,6 +1,4 @@
 """Тесты runtime-слоя: клиент Telegram и точка входа."""
-
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -15,12 +13,12 @@ class FakeTelegramClient:
 
     def __init__(
         self,
-        session_name: str,
+        session_string: object,
         api_id: int,
         api_hash: str,
         proxy: object | None = None,
     ) -> None:
-        self.session_name = session_name
+        self.session_string = session_string
         self.api_id = api_id
         self.api_hash = api_hash
         self.proxy = proxy
@@ -34,14 +32,14 @@ class FakeTelegramClient:
 @pytest.mark.asyncio
 async def test_userbot_client_start_and_stop(monkeypatch):
     """Проверяет, что обёртка делегирует запуск и остановку Telethon-клиенту."""
-    fake_client = FakeTelegramClient("session", 1, "hash")
+    fake_client = FakeTelegramClient("session-string", 1, "hash")
 
     monkeypatch.setattr(
         "userbot.client._build_telegram_client",
-        lambda session_name, api_id, api_hash, proxy=None: fake_client,
+        lambda session_string, api_id, api_hash, proxy=None: fake_client,
     )
 
-    client = UserBotClient(session_name="session", api_id=1, api_hash="hash")
+    client = UserBotClient(session_string="session-string", api_id=1, api_hash="hash")
     await client.start()
     await client.stop()
 
@@ -54,10 +52,10 @@ async def test_userbot_client_start_and_stop(monkeypatch):
 async def test_userbot_client_passes_proxy_to_telegram_client(monkeypatch):
     """Проверяет передачу proxy в Telethon-клиент."""
     captured: dict[str, object] = {}
-    fake_client = FakeTelegramClient("session", 1, "hash")
+    fake_client = FakeTelegramClient("session-string", 1, "hash")
 
-    def build_client(session_name: str, api_id: int, api_hash: str, proxy=None):
-        captured["session_name"] = session_name
+    def build_client(session_string: str, api_id: int, api_hash: str, proxy=None):
+        captured["session_string"] = session_string
         captured["api_id"] = api_id
         captured["api_hash"] = api_hash
         captured["proxy"] = proxy
@@ -66,7 +64,7 @@ async def test_userbot_client_passes_proxy_to_telegram_client(monkeypatch):
     monkeypatch.setattr("userbot.client._build_telegram_client", build_client)
 
     client = UserBotClient(
-        session_name="session",
+        session_string="session-string",
         api_id=1,
         api_hash="hash",
         proxy_url="http://user:pass@127.0.0.1:8080",
@@ -81,6 +79,53 @@ async def test_userbot_client_passes_proxy_to_telegram_client(monkeypatch):
         "password": "pass",
         "rdns": True,
     }
+
+
+def test_build_telegram_client_uses_string_session(monkeypatch):
+    """Проверяет, что Telethon-клиент создаётся из StringSession."""
+    import sys
+
+    from userbot import client as client_module
+
+    captured: dict[str, object] = {}
+
+    class FakeStringSession:
+        def __init__(self, value: str) -> None:
+            captured["session_value"] = value
+            self.value = value
+
+    class FakeTelegramClientFactory:
+        def __call__(self, session: object, api_id: int, api_hash: str, proxy=None) -> object:
+            captured["session_object"] = session
+            captured["api_id"] = api_id
+            captured["api_hash"] = api_hash
+            captured["proxy"] = proxy
+            return "telegram-client"
+
+    monkeypatch.setitem(
+        sys.modules,
+        "telethon",
+        SimpleNamespace(TelegramClient=FakeTelegramClientFactory()),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "telethon.sessions",
+        SimpleNamespace(StringSession=FakeStringSession),
+    )
+
+    telegram_client = client_module._build_telegram_client(
+        "session-string",
+        42,
+        "hash",
+        proxy={"proxy_type": "http"},
+    )
+
+    assert telegram_client == "telegram-client"
+    assert captured["session_value"] == "session-string"
+    assert isinstance(captured["session_object"], FakeStringSession)
+    assert captured["api_id"] == 42
+    assert captured["api_hash"] == "hash"
+    assert captured["proxy"] == {"proxy_type": "http"}
 
 
 def test_build_proxy_settings_for_http_proxy():
@@ -117,7 +162,7 @@ async def test_main_initializes_components(monkeypatch):
         api_id=1,
         api_hash="hash",
         gemini_api_key="gemini-key",
-        session_name="84523248603",
+        session_string="session-string",
         db_path=":memory:",
         whitelist_path="data/whitelist.md",
         topics_path="data/topics.md",
@@ -128,14 +173,14 @@ async def test_main_initializes_components(monkeypatch):
     history = SimpleNamespace(init_db=AsyncMock())
     whitelist = SimpleNamespace(load=AsyncMock())
     topic_selector = SimpleNamespace(load=AsyncMock())
-    fake_telegram_client = FakeTelegramClient("session", 1, "hash")
+    fake_telegram_client = FakeTelegramClient("session-string", 1, "hash")
     fake_userbot_client = SimpleNamespace(
         start=AsyncMock(),
         stop=AsyncMock(),
         client=fake_telegram_client,
     )
 
-    monkeypatch.setattr(run, "get_settings", lambda: settings)
+    monkeypatch.setattr(run, "load_settings_or_exit", lambda: settings)
     monkeypatch.setattr(run, "MessageHistory", lambda db_path: history)
     monkeypatch.setattr(run, "WhitelistFilter", lambda whitelist_path: whitelist)
     monkeypatch.setattr(run, "PromptLoader", lambda prompts_dir: object())
@@ -181,7 +226,7 @@ async def test_main_passes_gemini_resilience_settings(monkeypatch):
         gemini_max_retries=4,
         gemini_retry_backoff_seconds=2.0,
         gemini_retry_jitter_seconds=0.3,
-        session_name="84523248603",
+        session_string="session-string",
         db_path=":memory:",
         whitelist_path="data/whitelist.md",
         topics_path="data/topics.md",
@@ -192,7 +237,7 @@ async def test_main_passes_gemini_resilience_settings(monkeypatch):
     history = SimpleNamespace(init_db=AsyncMock())
     whitelist = SimpleNamespace(load=AsyncMock())
     topic_selector = SimpleNamespace(load=AsyncMock())
-    fake_telegram_client = FakeTelegramClient("session", 1, "hash")
+    fake_telegram_client = FakeTelegramClient("session-string", 1, "hash")
     fake_userbot_client = SimpleNamespace(
         start=AsyncMock(),
         stop=AsyncMock(),
@@ -200,7 +245,7 @@ async def test_main_passes_gemini_resilience_settings(monkeypatch):
     )
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr(run, "get_settings", lambda: settings)
+    monkeypatch.setattr(run, "load_settings_or_exit", lambda: settings)
     monkeypatch.setattr(run, "MessageHistory", lambda db_path: history)
     monkeypatch.setattr(run, "WhitelistFilter", lambda whitelist_path: whitelist)
     monkeypatch.setattr(run, "PromptLoader", lambda prompts_dir: object())
@@ -241,3 +286,11 @@ async def test_main_passes_gemini_resilience_settings(monkeypatch):
         "retry_backoff_seconds": 2.0,
         "retry_jitter_seconds": 0.3,
     }
+
+
+def test_build_telegram_client_rejects_blank_session_string():
+    """Проверяет явный отказ от пустой строковой сессии."""
+    from userbot.client import _build_telegram_client
+
+    with pytest.raises(ValueError, match="SESSION_STRING"):
+        _build_telegram_client("   ", 1, "hash")

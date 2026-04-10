@@ -6,21 +6,13 @@ from pathlib import Path
 from pprint import pformat
 from typing import Any
 
-from core.config import get_settings
+from core.config import load_settings_or_exit
 from core.logging import setup_logging
 from userbot.client import UserBotClient
 
 
 logger = logging.getLogger(__name__)
 INFO_PATH = Path("tg_user_info/info.txt")
-
-
-def _build_session_path(session_name: str) -> str:
-    """Преобразует имя сессии в путь до файла Telethon."""
-    session_path = Path(session_name)
-    if session_path.parent != Path(".") or session_path.suffix == ".session":
-        return str(session_path)
-    return str(Path("data/sessions") / session_name)
 
 
 def _extract_user_attributes(user: Any) -> dict[str, Any]:
@@ -94,11 +86,11 @@ def save_user_info(report: str, path: Path | None = None) -> Path:
 
 async def main() -> int:
     """Запускает выгрузку данных текущего Telegram-пользователя."""
-    settings = get_settings()
+    settings = load_settings_or_exit()
     setup_logging(settings.log_level)
 
     userbot_client = UserBotClient(
-        session_name=_build_session_path(settings.session_name),
+        session_string=settings.session_string,
         api_id=settings.api_id,
         api_hash=settings.api_hash,
         proxy_url=settings.proxy_url,

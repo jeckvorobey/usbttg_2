@@ -31,7 +31,7 @@ nano .env
 | `API_ID`         | [my.telegram.org](https://my.telegram.org) → API development tools |
 | `API_HASH`       | Там же                                                 |
 | `GEMINI_API_KEY` | [aistudio.google.com](https://aistudio.google.com/app/apikey) |
-| `SESSION_NAME`   | Имя файла сессии в `data/sessions/` (без `.session`)  |
+| `SESSION_STRING` | Строковая Telethon-сессия                             |
 | `PROXY_URL`      | Необязательно. Пример: `http://user:pass@host:port`   |
 
 Дополнительно можно настроить устойчивость Gemini при перегрузке:
@@ -184,7 +184,6 @@ python send_hello.py
 └── data/
     ├── whitelist.md    — Список разрешённых user_id
     ├── topics.md       — Темы для инициирования разговора
-    └── sessions/       — Файлы сессий Telethon (не удалять!)
 ```
 
 ---
@@ -199,6 +198,6 @@ pytest
 
 ## Важно
 
-- Файл `data/sessions/*.session` — это авторизованная сессия Telegram. **Не удалять и не публиковать.**
+- `SESSION_STRING` — это авторизованная сессия Telegram. **Не публиковать и не логировать.**
 - `.env` с секретами добавлен в `.gitignore`.
 - Userbot работает от лица реального аккаунта Telegram — используй осторожно, не нарушая ToS Telegram.

@@ -21,6 +21,17 @@ def inline_to_thread(monkeypatch):
     monkeypatch.setattr("userbot.handlers.asyncio.to_thread", fake_to_thread)
 
 
+@pytest.fixture(autouse=True)
+def skip_response_delay(monkeypatch):
+    """Отключает реальную задержку перед отправкой ответа в unit-тестах."""
+
+    async def fake_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr("userbot.handlers.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("userbot.handlers.random.uniform", lambda _a, _b: 0.0)
+
+
 async def test_whitelist_allows_listed_user():
     """Проверяет, что user_id из whitelist пропускается фильтром."""
     with tempfile.NamedTemporaryFile(

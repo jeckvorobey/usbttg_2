@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from core.config import get_settings
+from core.config import load_settings_or_exit
 from core.logging import setup_logging
 from userbot.client import UserBotClient
 
@@ -163,19 +163,9 @@ async def log_final_user_info(userbot_client: UserBotClient) -> None:
         getattr(user, "phone", None),
         getattr(user, "photo", None) is not None,
     )
-
-
-def _build_session_path(session_name: str) -> str:
-    """Преобразует имя сессии в путь до файла Telethon."""
-    session_path = Path(session_name)
-    if session_path.parent != Path(".") or session_path.suffix == ".session":
-        return str(session_path)
-    return str(Path("data/sessions") / session_name)
-
-
 async def main() -> int:
     """Точка входа интерактивного обновления профиля."""
-    settings = get_settings()
+    settings = load_settings_or_exit()
     setup_logging(settings.log_level)
 
     changes = collect_profile_changes()
@@ -184,7 +174,7 @@ async def main() -> int:
         return 0
 
     userbot_client = UserBotClient(
-        session_name=_build_session_path(settings.session_name),
+        session_string=settings.session_string,
         api_id=settings.api_id,
         api_hash=settings.api_hash,
         proxy_url=settings.proxy_url,

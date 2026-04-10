@@ -76,12 +76,12 @@ async def test_main_logs_report_and_saves_file(monkeypatch, caplog, tmp_path):
 
     monkeypatch.setattr(
         get_info,
-        "get_settings",
+        "load_settings_or_exit",
         lambda: Settings(
             api_id=1,
             api_hash="hash",
             gemini_api_key="gemini-key",
-            session_name="84523248603",
+            session_string="session-string",
             proxy_url=None,
         ),
     )

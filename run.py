@@ -3,13 +3,12 @@
 import asyncio
 import inspect
 import logging
-from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from ai.gemini import GeminiClient, PromptLoader
 from ai.history import MessageHistory
-from core.config import get_settings
+from core.config import load_settings_or_exit
 from core.logging import setup_logging
 from userbot.client import UserBotClient
 from userbot.handlers import WhitelistFilter, handle_new_message
@@ -38,18 +37,9 @@ async def _register_handlers(userbot_client: UserBotClient, whitelist: Whitelist
     telegram_client.add_event_handler(on_new_message, events.NewMessage())
     logger.info("Обработчик новых сообщений зарегистрирован")
 
-
-def _build_session_path(session_name: str) -> str:
-    """Преобразует имя сессии в путь до файла Telethon."""
-    session_path = Path(session_name)
-    if session_path.parent != Path(".") or session_path.suffix == ".session":
-        return str(session_path)
-    return str(Path("data/sessions") / session_name)
-
-
 async def main() -> None:
     """Инициализирует и запускает userbot."""
-    settings = get_settings()
+    settings = load_settings_or_exit()
     setup_logging(settings.log_level)
     logger.info("Запуск приложения userbot")
 
@@ -80,7 +70,7 @@ async def main() -> None:
     silence_watcher = SilenceWatcher()
 
     userbot_client = UserBotClient(
-        session_name=_build_session_path(settings.session_name),
+        session_string=settings.session_string,
         api_id=settings.api_id,
         api_hash=settings.api_hash,
         proxy_url=settings.proxy_url,

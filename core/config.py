@@ -1,10 +1,18 @@
 """Настройки приложения, загружаемые из .env файла через pydantic-settings."""
 
+import logging
 from functools import lru_cache
 from typing import Annotated
 
 from pydantic import BeforeValidator
+from pydantic_core import PydanticCustomError
+from pydantic import ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from core.logging import setup_logging
+
+
+logger = logging.getLogger(__name__)
 
 
 def _empty_str_to_none(v: object) -> object:
@@ -14,7 +22,22 @@ def _empty_str_to_none(v: object) -> object:
     return v
 
 
+def _require_non_empty_str(v: object) -> object:
+    """Отклоняет пустые строки для обязательных текстовых настроек."""
+    if not isinstance(v, str):
+        return v
+
+    normalized = v.strip()
+    if normalized == "":
+        raise PydanticCustomError(
+            "empty_env_value",
+            "Значение не должно быть пустым",
+        )
+    return normalized
+
+
 OptionalInt = Annotated[int | None, BeforeValidator(_empty_str_to_none)]
+RequiredStr = Annotated[str, BeforeValidator(_require_non_empty_str)]
 
 
 class Settings(BaseSettings):
@@ -38,8 +61,8 @@ class Settings(BaseSettings):
     gemini_retry_backoff_seconds: float = 1.0
     gemini_retry_jitter_seconds: float = 0.3
 
-    # Telethon сессия (имя файла без .session)
-    session_name: str = "84523248603"
+    # Telethon строковая сессия
+    session_string: RequiredStr
 
     # Общий proxy URL для внешних подключений
     proxy_url: str | None = None
@@ -68,3 +91,13 @@ def get_settings() -> Settings:
         Инициализированный объект Settings.
     """
     return Settings()
+
+
+def load_settings_or_exit(default_log_level: str = "INFO") -> Settings:
+    """Загружает настройки и завершает приложение при ошибке конфигурации."""
+    try:
+        return get_settings()
+    except ValidationError as exc:
+        setup_logging(default_log_level)
+        logger.critical("Ошибка конфигурации окружения: %s", exc)
+        raise SystemExit(1) from exc

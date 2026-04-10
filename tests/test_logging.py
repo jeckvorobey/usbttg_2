@@ -23,6 +23,17 @@ def inline_gemini_to_thread(monkeypatch):
     monkeypatch.setattr("ai.gemini.asyncio.to_thread", fake_to_thread)
 
 
+@pytest.fixture(autouse=True)
+def skip_handler_response_delay(monkeypatch):
+    """Отключает реальную задержку ответа в тестах логирования обработчика."""
+
+    async def fake_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr("userbot.handlers.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("userbot.handlers.random.uniform", lambda _a, _b: 0.0)
+
+
 def test_setup_logging_sets_root_level():
     """Проверяет, что инициализация задаёт ожидаемый уровень root logger."""
     from core.logging import setup_logging
@@ -61,7 +72,7 @@ async def test_run_main_logs_startup_and_shutdown(monkeypatch, caplog):
         api_id=1,
         api_hash="hash",
         gemini_api_key="gemini-key",
-        session_name="84523248603",
+        session_string="session-string",
         db_path=":memory:",
         whitelist_path="data/whitelist.md",
         topics_path="data/topics.md",
