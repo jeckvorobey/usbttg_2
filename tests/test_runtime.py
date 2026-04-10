@@ -198,7 +198,7 @@ async def test_main_initializes_components(monkeypatch):
         ),
     )
     monkeypatch.setattr(run, "TopicSelector", lambda topics_path: topic_selector)
-    monkeypatch.setattr(run, "ConversationSession", lambda: object())
+    monkeypatch.setattr(run, "ConversationSession", lambda duration_minutes=30: object())
     monkeypatch.setattr(run, "AsyncIOScheduler", lambda: SimpleNamespace(add_job=lambda *a, **kw: None, start=lambda: None))
     monkeypatch.setattr(run, "UserBotClient", lambda **kwargs: fake_userbot_client)
     monkeypatch.setattr(run, "_register_handlers", AsyncMock())
@@ -270,7 +270,7 @@ async def test_main_passes_gemini_resilience_settings(monkeypatch):
 
     monkeypatch.setattr(run, "GeminiClient", build_gemini_client)
     monkeypatch.setattr(run, "TopicSelector", lambda topics_path: topic_selector)
-    monkeypatch.setattr(run, "ConversationSession", lambda: object())
+    monkeypatch.setattr(run, "ConversationSession", lambda duration_minutes=30: object())
     monkeypatch.setattr(run, "AsyncIOScheduler", lambda: SimpleNamespace(add_job=lambda *a, **kw: None, start=lambda: None))
     monkeypatch.setattr(run, "UserBotClient", lambda **kwargs: fake_userbot_client)
     monkeypatch.setattr(run, "_register_handlers", AsyncMock())

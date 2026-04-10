@@ -98,7 +98,7 @@ async def test_run_main_logs_startup_and_shutdown(monkeypatch, caplog):
     )
     scheduler = SimpleNamespace(add_job=lambda *args, **kwargs: None, start=lambda: None, shutdown=AsyncMock())
 
-    monkeypatch.setattr(run, "get_settings", lambda: settings)
+    monkeypatch.setattr(run, "load_settings_or_exit", lambda: settings)
     monkeypatch.setattr(run, "MessageHistory", lambda db_path: history)
     monkeypatch.setattr(run, "WhitelistFilter", lambda whitelist_path: whitelist)
     monkeypatch.setattr(run, "PromptLoader", lambda prompts_dir: object())
@@ -113,7 +113,7 @@ async def test_run_main_logs_startup_and_shutdown(monkeypatch, caplog):
         ),
     )
     monkeypatch.setattr(run, "TopicSelector", lambda topics_path: topic_selector)
-    monkeypatch.setattr(run, "ConversationSession", lambda: object())
+    monkeypatch.setattr(run, "ConversationSession", lambda duration_minutes=30: object())
     monkeypatch.setattr(run, "AsyncIOScheduler", lambda: scheduler)
     monkeypatch.setattr(run, "UserBotClient", lambda **kwargs: fake_userbot_client)
     monkeypatch.setattr(run, "_register_handlers", AsyncMock())

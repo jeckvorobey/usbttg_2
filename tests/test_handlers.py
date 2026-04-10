@@ -216,6 +216,99 @@ async def test_handle_new_message_silent_on_temporary_gemini_error():
     history.save_message.assert_not_awaited()
 
 
+async def test_wind_down_hint_included_when_few_minutes_remain():
+    """Проверяет, что wind-down hint добавляется в промт когда осталось ≤5 минут."""
+    whitelist = WhitelistFilter(whitelist_path="unused")
+    whitelist.user_ids = {123}
+
+    history = SimpleNamespace(
+        get_history=AsyncMock(return_value=[]),
+        save_message=AsyncMock(),
+    )
+    prompt_loader = SimpleNamespace(
+        load=AsyncMock(side_effect=["Системный промт", "Промт ответа", "Осталось {remaining} мин."])
+    )
+    gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ"))
+    event = SimpleNamespace(sender_id=123, raw_text="Привет", respond=AsyncMock())
+
+    session = SimpleNamespace(remaining_minutes=lambda: 3)
+
+    await handle_new_message(
+        event=event,
+        whitelist=whitelist,
+        history=history,
+        prompt_loader=prompt_loader,
+        gemini_client=gemini_client,
+        conversation_session=session,
+    )
+
+    call_args = gemini_client.generate_reply.call_args
+    system_prompt_used = call_args.kwargs.get("system_prompt") or call_args.args[0]
+    assert "Осталось 3 мин." in system_prompt_used
+
+
+async def test_wind_down_hint_not_included_when_time_is_enough():
+    """Проверяет, что wind-down hint не добавляется когда времени больше 5 минут."""
+    whitelist = WhitelistFilter(whitelist_path="unused")
+    whitelist.user_ids = {123}
+
+    history = SimpleNamespace(
+        get_history=AsyncMock(return_value=[]),
+        save_message=AsyncMock(),
+    )
+    prompt_loader = SimpleNamespace(
+        load=AsyncMock(side_effect=["Системный промт", "Промт ответа"])
+    )
+    gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ"))
+    event = SimpleNamespace(sender_id=123, raw_text="Привет", respond=AsyncMock())
+
+    session = SimpleNamespace(remaining_minutes=lambda: 15)
+
+    await handle_new_message(
+        event=event,
+        whitelist=whitelist,
+        history=history,
+        prompt_loader=prompt_loader,
+        gemini_client=gemini_client,
+        conversation_session=session,
+    )
+
+    call_args = gemini_client.generate_reply.call_args
+    system_prompt_used = call_args.kwargs.get("system_prompt") or call_args.args[0]
+    assert "wind_down" not in system_prompt_used
+    assert "Осталось" not in system_prompt_used
+
+
+async def test_wind_down_hint_not_included_when_no_session():
+    """Проверяет, что при отсутствии сессии wind-down hint не добавляется."""
+    whitelist = WhitelistFilter(whitelist_path="unused")
+    whitelist.user_ids = {123}
+
+    history = SimpleNamespace(
+        get_history=AsyncMock(return_value=[]),
+        save_message=AsyncMock(),
+    )
+    prompt_loader = SimpleNamespace(
+        load=AsyncMock(side_effect=["Системный промт", "Промт ответа"])
+    )
+    gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ"))
+    event = SimpleNamespace(sender_id=123, raw_text="Привет", respond=AsyncMock())
+
+    await handle_new_message(
+        event=event,
+        whitelist=whitelist,
+        history=history,
+        prompt_loader=prompt_loader,
+        gemini_client=gemini_client,
+        conversation_session=None,
+    )
+
+    gemini_client.generate_reply.assert_awaited_once()
+    call_args = gemini_client.generate_reply.call_args
+    system_prompt_used = call_args.kwargs.get("system_prompt") or call_args.args[0]
+    assert "Осталось" not in system_prompt_used
+
+
 async def test_handle_new_message_accepts_chat_id_from_event():
     """Проверяет, что наличие chat_id не мешает штатной обработке сообщения."""
     whitelist = WhitelistFilter(whitelist_path="unused")

@@ -107,3 +107,38 @@ def test_session_inactive_after_stop():
     session.start(topic="Тема")
     session.stop()
     assert session.is_active() is False
+
+
+def test_remaining_minutes_returns_none_before_start():
+    """Проверяет, что remaining_minutes возвращает None до запуска сессии."""
+    session = ConversationSession(duration_minutes=30)
+    assert session.remaining_minutes() is None
+
+
+def test_remaining_minutes_returns_none_after_stop():
+    """Проверяет, что remaining_minutes возвращает None после остановки сессии."""
+    session = ConversationSession(duration_minutes=30)
+    session.start(topic="Тема")
+    session.stop()
+    assert session.remaining_minutes() is None
+
+
+def test_remaining_minutes_returns_value_after_start():
+    """Проверяет, что remaining_minutes возвращает неотрицательное число сразу после запуска."""
+    session = ConversationSession(duration_minutes=10)
+    session.start(topic="Тема")
+    remaining = session.remaining_minutes()
+    assert remaining is not None
+    assert 0 <= remaining <= 10
+
+
+def test_remaining_minutes_returns_zero_when_expired():
+    """Проверяет, что remaining_minutes возвращает 0 для просроченной сессии."""
+    from datetime import timedelta
+
+    session = ConversationSession(duration_minutes=1)
+    session.start(topic="Тема")
+    # Сдвигаем время старта в прошлое на 2 минуты
+    session._start_time = session._start_time - timedelta(minutes=2)
+    remaining = session.remaining_minutes()
+    assert remaining == 0
