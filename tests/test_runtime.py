@@ -164,14 +164,14 @@ async def test_main_initializes_components(monkeypatch):
         gemini_api_key="gemini-key",
         session_string="session-string",
         db_path=":memory:",
-        whitelist_path="data/whitelist.md",
+        whitelist_user_ids="123456789,987654321",
         topics_path="data/topics.md",
         prompts_dir="ai/prompts",
         proxy_url="http://127.0.0.1:8080",
     )
 
     history = SimpleNamespace(init_db=AsyncMock())
-    whitelist = SimpleNamespace(load=AsyncMock())
+    whitelist = SimpleNamespace()
     topic_selector = SimpleNamespace(load=AsyncMock())
     fake_telegram_client = FakeTelegramClient("session-string", 1, "hash")
     fake_userbot_client = SimpleNamespace(
@@ -182,7 +182,7 @@ async def test_main_initializes_components(monkeypatch):
 
     monkeypatch.setattr(run, "load_settings_or_exit", lambda: settings)
     monkeypatch.setattr(run, "MessageHistory", lambda db_path: history)
-    monkeypatch.setattr(run, "WhitelistFilter", lambda whitelist_path: whitelist)
+    monkeypatch.setattr(run, "WhitelistFilter", lambda user_ids: whitelist)
     monkeypatch.setattr(run, "PromptLoader", lambda prompts_dir: object())
     monkeypatch.setattr(
         run,
@@ -206,7 +206,6 @@ async def test_main_initializes_components(monkeypatch):
     await run.main()
 
     history.init_db.assert_awaited_once()
-    whitelist.load.assert_awaited_once()
     topic_selector.load.assert_awaited_once()
     fake_userbot_client.start.assert_awaited_once()
     fake_telegram_client.run_until_disconnected.assert_awaited_once()
@@ -228,14 +227,14 @@ async def test_main_passes_gemini_resilience_settings(monkeypatch):
         gemini_retry_jitter_seconds=0.3,
         session_string="session-string",
         db_path=":memory:",
-        whitelist_path="data/whitelist.md",
+        whitelist_user_ids="123456789",
         topics_path="data/topics.md",
         prompts_dir="ai/prompts",
         proxy_url="http://127.0.0.1:8080",
     )
 
     history = SimpleNamespace(init_db=AsyncMock())
-    whitelist = SimpleNamespace(load=AsyncMock())
+    whitelist = SimpleNamespace()
     topic_selector = SimpleNamespace(load=AsyncMock())
     fake_telegram_client = FakeTelegramClient("session-string", 1, "hash")
     fake_userbot_client = SimpleNamespace(
@@ -247,7 +246,7 @@ async def test_main_passes_gemini_resilience_settings(monkeypatch):
 
     monkeypatch.setattr(run, "load_settings_or_exit", lambda: settings)
     monkeypatch.setattr(run, "MessageHistory", lambda db_path: history)
-    monkeypatch.setattr(run, "WhitelistFilter", lambda whitelist_path: whitelist)
+    monkeypatch.setattr(run, "WhitelistFilter", lambda user_ids: whitelist)
     monkeypatch.setattr(run, "PromptLoader", lambda prompts_dir: object())
 
     def build_gemini_client(

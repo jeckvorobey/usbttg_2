@@ -72,9 +72,12 @@ class Settings(BaseSettings):
 
     # Пути к файлам данных
     db_path: str = "data/history.db"
-    whitelist_path: str = "data/whitelist.md"
     topics_path: str = "data/topics.md"
     prompts_dir: str = "ai/prompts"
+
+    # Whitelist разрешённых Telegram user_id через запятую
+    # Пример: WHITELIST_USER_IDS=123456789,987654321
+    whitelist_user_ids: str = ""
 
     # Планировщик разговоров
     scheduler_enabled: bool = True

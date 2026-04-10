@@ -74,7 +74,7 @@ async def test_run_main_logs_startup_and_shutdown(monkeypatch, caplog):
         gemini_api_key="gemini-key",
         session_string="session-string",
         db_path=":memory:",
-        whitelist_path="data/whitelist.md",
+        whitelist_user_ids="123456789",
         topics_path="data/topics.md",
         prompts_dir="ai/prompts",
         proxy_url=None,
@@ -85,7 +85,7 @@ async def test_run_main_logs_startup_and_shutdown(monkeypatch, caplog):
     )
 
     history = SimpleNamespace(init_db=AsyncMock())
-    whitelist = SimpleNamespace(load=AsyncMock())
+    whitelist = SimpleNamespace()
     topic_selector = SimpleNamespace(load=AsyncMock())
     fake_telegram_client = SimpleNamespace(
         run_until_disconnected=AsyncMock(),
@@ -100,7 +100,7 @@ async def test_run_main_logs_startup_and_shutdown(monkeypatch, caplog):
 
     monkeypatch.setattr(run, "load_settings_or_exit", lambda: settings)
     monkeypatch.setattr(run, "MessageHistory", lambda db_path: history)
-    monkeypatch.setattr(run, "WhitelistFilter", lambda whitelist_path: whitelist)
+    monkeypatch.setattr(run, "WhitelistFilter", lambda user_ids: whitelist)
     monkeypatch.setattr(run, "PromptLoader", lambda prompts_dir: object())
     monkeypatch.setattr(
         run,
@@ -130,8 +130,7 @@ async def test_run_main_logs_startup_and_shutdown(monkeypatch, caplog):
 @pytest.mark.asyncio
 async def test_handle_new_message_logs_successful_processing(caplog):
     """Проверяет логирование успешной обработки входящего сообщения."""
-    whitelist = WhitelistFilter(whitelist_path="unused")
-    whitelist.user_ids = {123}
+    whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
         get_history=AsyncMock(return_value=[{"role": "user", "text": "Предыдущее"}]),
@@ -160,8 +159,7 @@ async def test_handle_new_message_logs_successful_processing(caplog):
 @pytest.mark.asyncio
 async def test_handle_new_message_logs_whitelist_skip(caplog):
     """Проверяет логирование пропуска сообщения для пользователя вне whitelist."""
-    whitelist = WhitelistFilter(whitelist_path="unused")
-    whitelist.user_ids = {123}
+    whitelist = WhitelistFilter(user_ids={123})
     event = SimpleNamespace(sender_id=999, chat_id=-100555000111, raw_text="Привет", respond=AsyncMock())
 
     with caplog.at_level(logging.INFO):
@@ -180,8 +178,7 @@ async def test_handle_new_message_logs_whitelist_skip(caplog):
 @pytest.mark.asyncio
 async def test_handle_new_message_logs_gemini_error_silently(caplog):
     """Проверяет логирование ошибки Gemini без ответа пользователю."""
-    whitelist = WhitelistFilter(whitelist_path="unused")
-    whitelist.user_ids = {123}
+    whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
         get_history=AsyncMock(return_value=[{"role": "user", "text": "Предыдущее"}]),
@@ -210,8 +207,7 @@ async def test_handle_new_message_logs_gemini_error_silently(caplog):
 @pytest.mark.asyncio
 async def test_handle_new_message_logs_temporary_gemini_unavailability(caplog):
     """Проверяет, что временная недоступность Gemini логируется без traceback как warning."""
-    whitelist = WhitelistFilter(whitelist_path="unused")
-    whitelist.user_ids = {123}
+    whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
         get_history=AsyncMock(return_value=[{"role": "user", "text": "Предыдущее"}]),

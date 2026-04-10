@@ -47,9 +47,13 @@ async def main() -> None:
     logger.info("Инициализация хранилища истории сообщений")
     await history.init_db()
 
-    whitelist = WhitelistFilter(settings.whitelist_path)
-    logger.info("Загрузка whitelist из %s", settings.whitelist_path)
-    await whitelist.load()
+    whitelist_ids = {
+        int(uid.strip())
+        for uid in settings.whitelist_user_ids.split(",")
+        if uid.strip().isdigit()
+    }
+    whitelist = WhitelistFilter(user_ids=whitelist_ids)
+    logger.info("Whitelist инициализирован из WHITELIST_USER_IDS: %s пользователей", len(whitelist_ids))
 
     prompt_loader = PromptLoader(settings.prompts_dir)
     logger.info("Инициализация Gemini клиента")
@@ -91,8 +95,12 @@ async def main() -> None:
     scheduler = AsyncIOScheduler()
 
     if settings.scheduler_enabled:
+        async def _session_expiry_job() -> None:
+            """Проверяет истечение активной сессии разговора — запускается каждую минуту."""
+            conversation_session.is_active()
+
         async def _silence_check_job() -> None:
-            """Проверяет тишину в группе и инициирует разговор если порог превышен."""
+            """Инициирует разговор после тишины — запускается каждые SILENCE_TIMEOUT_MINUTES."""
             if conversation_session.is_active():
                 return
             if not silence_watcher.is_silence_exceeded(settings.silence_timeout_minutes):
@@ -117,9 +125,12 @@ async def main() -> None:
             except Exception:
                 logger.exception("Ошибка при инициации разговора по расписанию")
 
-        scheduler.add_job(_silence_check_job, "interval", minutes=1)
+        scheduler.add_job(_session_expiry_job, "interval", minutes=1)
+        scheduler.add_job(_silence_check_job, "interval", minutes=settings.silence_timeout_minutes)
         logger.info(
-            "Планировщик тишины активен: таймаут=%s мин", settings.silence_timeout_minutes
+            "Планировщик активен: проверка тишины каждые %s мин, сессия до %s мин",
+            settings.silence_timeout_minutes,
+            settings.session_duration_minutes,
         )
     else:
         logger.info("Режим расписания отключён (SCHEDULER_ENABLED=false)")

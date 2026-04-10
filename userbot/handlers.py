@@ -4,7 +4,6 @@ import asyncio
 import inspect
 import logging
 import random
-from pathlib import Path
 from typing import Any
 
 from ai.gemini import GeminiClient, GeminiGenerationError, GeminiTemporaryError, PromptLoader
@@ -18,35 +17,15 @@ logger = logging.getLogger(__name__)
 class WhitelistFilter:
     """Фильтрует входящие сообщения по списку разрешённых Telegram user_id."""
 
-    def __init__(self, whitelist_path: str) -> None:
+    def __init__(self, user_ids: set[int]) -> None:
         """
         Инициализирует фильтр.
 
         Args:
-            whitelist_path: Путь к файлу whitelist.md со списком user_id.
+            user_ids: Множество разрешённых Telegram user_id.
         """
-        self.whitelist_path = whitelist_path
-        self.user_ids: set[int] = set()
-
-    async def load(self) -> None:
-        """
-        Загружает список user_id из whitelist файла.
-
-        Строки начинающиеся на '#' считаются комментариями и игнорируются.
-        Пустые строки также игнорируются.
-        """
-        path = Path(self.whitelist_path)
-        logger.info("Загрузка whitelist из %s", path)
-        content = await asyncio.to_thread(path.read_text, encoding="utf-8")
-        user_ids: set[int] = set()
-        for raw_line in content.splitlines():
-            line = raw_line.strip()
-            if not line or line.startswith("#") or line == "---":
-                continue
-            if line.isdigit():
-                user_ids.add(int(line))
         self.user_ids = user_ids
-        logger.info("Whitelist загружен: %s user_id", len(self.user_ids))
+        logger.info("Whitelist инициализирован: %s user_id", len(self.user_ids))
 
     async def is_allowed(self, user_id: int) -> bool:
         """
