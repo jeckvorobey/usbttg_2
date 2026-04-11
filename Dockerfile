@@ -2,6 +2,7 @@ FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
     UV_LINK_MODE=copy \
     DB_PATH=/data/history.db
 
@@ -13,7 +14,9 @@ RUN apt-get update \
 
 COPY pyproject.toml uv.lock ./
 
-RUN pip install --no-cache-dir uv \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=cache,target=/root/.cache/uv \
+    pip install uv==0.11.6 \
     && uv export --frozen --no-dev --format requirements-txt -o requirements.txt \
     && uv pip install --system --requirement requirements.txt \
     && rm requirements.txt
