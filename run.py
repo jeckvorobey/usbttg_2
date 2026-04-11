@@ -25,6 +25,53 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def _iter_candidate_chat_ids(chat_id: int) -> set[int]:
+    """Возвращает набор идентификаторов для сопоставления чата и entity Telethon."""
+    candidates = {chat_id, abs(chat_id)}
+    absolute_chat_id = abs(chat_id)
+
+    if chat_id > 0:
+        candidates.add(-(10**12 + chat_id))
+        return candidates
+
+    if absolute_chat_id >= 10**12:
+        candidates.add(absolute_chat_id - 10**12)
+
+    return candidates
+
+
+def _chat_id_matches(expected_chat_id: int, actual_chat_id: object) -> bool:
+    """Проверяет, соответствует ли найденный идентификатор настроенному chat_id."""
+    return isinstance(actual_chat_id, int) and actual_chat_id in _iter_candidate_chat_ids(expected_chat_id)
+
+
+async def _resolve_group_target(telegram_client: object | None, group_chat_id: int | None) -> object | None:
+    """Находит и кэширует entity целевой группы для вызовов Telethon."""
+    if telegram_client is None or group_chat_id is None:
+        return group_chat_id
+
+    cached_chat_id = getattr(telegram_client, "_resolved_group_chat_id", None)
+    cached_target = getattr(telegram_client, "_resolved_group_chat_target", None)
+    if cached_chat_id == group_chat_id and cached_target is not None:
+        return cached_target
+
+    iter_dialogs = getattr(telegram_client, "iter_dialogs", None)
+    if iter_dialogs is None:
+        return group_chat_id
+
+    async for dialog in iter_dialogs():
+        dialog_id = getattr(dialog, "id", None)
+        entity = getattr(dialog, "entity", None)
+        entity_id = getattr(entity, "id", None)
+        if _chat_id_matches(group_chat_id, dialog_id) or _chat_id_matches(group_chat_id, entity_id):
+            setattr(telegram_client, "_resolved_group_chat_id", group_chat_id)
+            setattr(telegram_client, "_resolved_group_chat_target", entity or dialog)
+            return getattr(telegram_client, "_resolved_group_chat_target")
+
+    logger.warning("Не удалось найти entity целевой группы для group_chat_id=%s среди диалогов клиента", group_chat_id)
+    return group_chat_id
+
+
 async def _sync_group_activity(
     telegram_client: object | None,
     group_chat_id: int | None,
@@ -38,9 +85,18 @@ async def _sync_group_activity(
     if get_messages is None:
         return
 
-    result = get_messages(group_chat_id, limit=1)
-    if inspect.isawaitable(result):
-        result = await result
+    group_target = await _resolve_group_target(telegram_client, group_chat_id)
+
+    try:
+        result = get_messages(group_target, limit=1)
+        if inspect.isawaitable(result):
+            result = await result
+    except ValueError:
+        logger.warning(
+            "Не удалось получить последнее сообщение группы для group_chat_id=%s: entity не резолвится клиентом",
+            group_chat_id,
+        )
+        return
 
     last_message = None
     if isinstance(result, list):
@@ -152,6 +208,7 @@ async def main() -> None:
                 return
             if telegram_client is None:
                 return
+            group_target = await _resolve_group_target(telegram_client, settings.group_chat_id)
             try:
                 topic = await topic_selector.pick_random()
                 system_prompt = await prompt_loader.load("system")
@@ -160,7 +217,7 @@ async def main() -> None:
                     system_prompt=f"{system_prompt}\n\n{start_topic_prompt}",
                     topic=topic,
                 )
-                await telegram_client.send_message(settings.group_chat_id, message)
+                await telegram_client.send_message(group_target, message)
                 conversation_session.start(topic)
                 silence_watcher.update_last_activity()
                 logger.info("Разговор на тему '%s' инициирован после тишины", topic)

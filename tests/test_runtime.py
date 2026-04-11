@@ -425,6 +425,52 @@ async def test_sync_group_activity_uses_latest_message_timestamp():
 
 
 @pytest.mark.asyncio
+async def test_sync_group_activity_resolves_group_entity_via_dialogs():
+    """Проверяет, что синхронизация использует найденную entity группы вместо сырого chat_id."""
+    from datetime import datetime, timedelta
+
+    import run
+    from userbot.scheduler import SilenceWatcher
+
+    message_time = datetime.now() - timedelta(minutes=15)
+    resolved_entity = SimpleNamespace(id=1453890188, access_hash=123)
+
+    async def iter_dialogs():
+        yield SimpleNamespace(id=-1001453890188, entity=resolved_entity)
+
+    telegram_client = SimpleNamespace(
+        get_messages=AsyncMock(return_value=[SimpleNamespace(date=message_time)]),
+        iter_dialogs=iter_dialogs,
+    )
+    silence_watcher = SilenceWatcher()
+
+    await run._sync_group_activity(telegram_client, -1001453890188, silence_watcher)
+
+    telegram_client.get_messages.assert_awaited_once_with(resolved_entity, limit=1)
+    assert silence_watcher.is_silence_exceeded(10) is True
+    assert silence_watcher.is_silence_exceeded(20) is False
+
+
+@pytest.mark.asyncio
+async def test_sync_group_activity_does_not_fail_when_entity_is_unresolved(caplog):
+    """Проверяет, что ошибка резолва entity не роняет планировщик."""
+    import logging
+    import run
+    from userbot.scheduler import SilenceWatcher
+
+    telegram_client = SimpleNamespace(
+        get_messages=AsyncMock(side_effect=ValueError("Could not find the input entity"))
+    )
+    silence_watcher = SilenceWatcher()
+
+    with caplog.at_level(logging.WARNING):
+        await run._sync_group_activity(telegram_client, -1001453890188, silence_watcher)
+
+    assert any("Не удалось получить последнее сообщение группы" in record.getMessage() for record in caplog.records)
+    assert silence_watcher._last_activity is None
+
+
+@pytest.mark.asyncio
 async def test_main_binds_dnd_hours_utc_to_telegram_client(monkeypatch):
     """Проверяет, что DND-интервал привязывается к runtime Telegram-клиента."""
     import run
