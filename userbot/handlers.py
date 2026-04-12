@@ -125,13 +125,19 @@ async def handle_new_message(
         )
         return
 
-    if conversation_session is None or not conversation_session.is_active():
-        logger.info(
-            "Сообщение от user_id=%s в chat_id=%s пропущено: сессия разговора не активна",
-            sender_id,
-            chat_id,
-        )
-        return
+    session_is_active = False
+    if conversation_session is not None:
+        session_is_active = conversation_session.is_active()
+        if not session_is_active:
+            start_session = getattr(conversation_session, "start", None)
+            if callable(start_session):
+                start_session(user_message)
+                session_is_active = True
+                logger.info(
+                    "Локальная сессия разговора запущена по входящему сообщению от user_id=%s в chat_id=%s",
+                    sender_id,
+                    chat_id,
+                )
 
     history_items = await history.get_history(sender_id)
     logger.info(
@@ -143,7 +149,7 @@ async def handle_new_message(
     system_prompt = await prompt_loader.load("system")
     reply_prompt = await prompt_loader.load("reply")
     wind_down_hint = ""
-    if conversation_session is not None and conversation_session.is_active():
+    if conversation_session is not None and session_is_active:
         remaining = conversation_session.remaining_minutes()
         if remaining is not None and remaining <= 2:
             hint_template = await prompt_loader.load("wind_down_hint")

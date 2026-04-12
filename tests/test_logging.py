@@ -247,18 +247,18 @@ async def test_handle_new_message_logs_temporary_gemini_unavailability(caplog):
 
 
 @pytest.mark.asyncio
-async def test_handle_new_message_logs_skip_when_session_inactive(caplog):
-    """Проверяет логирование пропуска сообщения при неактивной сессии."""
+async def test_handle_new_message_logs_external_session_start(caplog):
+    """Проверяет логирование внешнего запуска локальной сессии по первому сообщению."""
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
         get_history=AsyncMock(return_value=[]),
         save_message=AsyncMock(),
     )
-    prompt_loader = SimpleNamespace(load=AsyncMock())
-    gemini_client = SimpleNamespace(generate_reply=AsyncMock())
+    prompt_loader = SimpleNamespace(load=AsyncMock(side_effect=["Системный промт", "Промт ответа"]))
+    gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ"))
     event = SimpleNamespace(sender_id=123, chat_id=-100555000111, raw_text="Привет", respond=AsyncMock())
-    session = SimpleNamespace(is_active=lambda: False, remaining_minutes=lambda: None)
+    session = SimpleNamespace(is_active=lambda: False, remaining_minutes=lambda: None, start=lambda _topic: None)
 
     with caplog.at_level(logging.INFO):
         await handle_new_message(
@@ -272,7 +272,8 @@ async def test_handle_new_message_logs_skip_when_session_inactive(caplog):
         )
 
     messages = [record.getMessage() for record in caplog.records]
-    assert any("сессия разговора не активна" in message for message in messages)
+    assert any("Локальная сессия разговора запущена по входящему сообщению" in message for message in messages)
+    assert any("Ответ пользователю user_id=123 в chat_id=-100555000111 отправлен" in message for message in messages)
 
 
 @pytest.mark.asyncio

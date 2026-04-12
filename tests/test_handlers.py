@@ -218,8 +218,8 @@ async def test_wind_down_hint_not_included_when_time_is_enough():
     assert "Осталось" not in system_prompt_used
 
 
-async def test_wind_down_hint_not_included_when_no_session():
-    """Проверяет, что при отсутствии сессии бот не отвечает."""
+async def test_handle_new_message_replies_when_session_is_missing():
+    """Проверяет, что отсутствие объекта сессии не блокирует ответ whitelisted отправителю."""
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
@@ -241,12 +241,12 @@ async def test_wind_down_hint_not_included_when_no_session():
         conversation_session=None,
     )
 
-    gemini_client.generate_reply.assert_not_awaited()
-    event.respond.assert_not_awaited()
-    history.get_history.assert_not_awaited()
+    gemini_client.generate_reply.assert_awaited_once()
+    event.respond.assert_awaited_once_with("Ответ")
+    history.get_history.assert_awaited_once()
 
-async def test_handle_new_message_skips_when_session_is_inactive():
-    """Проверяет, что после окончания сессии бот замолкает."""
+async def test_handle_new_message_starts_session_when_it_is_inactive():
+    """Проверяет, что первое сообщение из whitelist запускает локальную сессию."""
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
@@ -257,7 +257,7 @@ async def test_handle_new_message_skips_when_session_is_inactive():
     gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ"))
     silence_watcher = SimpleNamespace(update_last_activity=Mock())
     event = SimpleNamespace(sender_id=123, raw_text="Привет", respond=AsyncMock())
-    session = SimpleNamespace(is_active=lambda: False, remaining_minutes=lambda: None)
+    session = SimpleNamespace(is_active=lambda: False, remaining_minutes=lambda: None, start=Mock())
 
     await handle_new_message(
         event=event,
@@ -270,10 +270,11 @@ async def test_handle_new_message_skips_when_session_is_inactive():
     )
 
     silence_watcher.update_last_activity.assert_called_once_with()
-    gemini_client.generate_reply.assert_not_awaited()
-    event.respond.assert_not_awaited()
-    history.get_history.assert_not_awaited()
-    history.save_message.assert_not_awaited()
+    session.start.assert_called_once_with("Привет")
+    gemini_client.generate_reply.assert_awaited_once()
+    event.respond.assert_awaited_once_with("Ответ")
+    history.get_history.assert_awaited_once()
+    assert history.save_message.await_count == 2
 
 
 async def test_handle_new_message_skips_when_dnd_is_active():
