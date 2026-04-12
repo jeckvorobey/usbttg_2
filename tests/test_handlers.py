@@ -157,6 +157,37 @@ async def test_handle_new_message_silent_on_temporary_gemini_error():
     history.save_message.assert_not_awaited()
 
 
+async def test_handle_new_message_skips_when_session_expires_after_generation():
+    """Проверяет, что после истечения сессии по итогам генерации ответ не отправляется и не сохраняется."""
+    whitelist = WhitelistFilter(user_ids={123})
+
+    history = SimpleNamespace(
+        get_history=AsyncMock(return_value=[]),
+        save_message=AsyncMock(),
+    )
+    prompt_loader = SimpleNamespace(
+        load=AsyncMock(side_effect=["Системный промт", "Промт ответа"])
+    )
+    gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ"))
+    event = SimpleNamespace(sender_id=123, raw_text="Привет", respond=AsyncMock())
+    session = Mock()
+    session.is_active.side_effect = [True, False]
+    session.remaining_minutes.return_value = 6
+
+    await handle_new_message(
+        event=event,
+        whitelist=whitelist,
+        history=history,
+        prompt_loader=prompt_loader,
+        gemini_client=gemini_client,
+        conversation_session=session,
+    )
+
+    gemini_client.generate_reply.assert_awaited_once()
+    event.respond.assert_not_awaited()
+    history.save_message.assert_not_awaited()
+
+
 async def test_wind_down_hint_included_when_two_minutes_remain():
     """Проверяет, что wind-down hint добавляется в промт когда осталось 2 минуты."""
     whitelist = WhitelistFilter(user_ids={123})
@@ -257,7 +288,16 @@ async def test_handle_new_message_starts_session_when_it_is_inactive():
     gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ"))
     silence_watcher = SimpleNamespace(update_last_activity=Mock())
     event = SimpleNamespace(sender_id=123, raw_text="Привет", respond=AsyncMock())
-    session = SimpleNamespace(is_active=lambda: False, remaining_minutes=lambda: None, start=Mock())
+    session_state = {"active": False}
+
+    def start_session(_topic: str) -> None:
+        session_state["active"] = True
+
+    session = SimpleNamespace(
+        is_active=lambda: session_state["active"],
+        remaining_minutes=lambda: 6 if session_state["active"] else None,
+        start=Mock(side_effect=start_session),
+    )
 
     await handle_new_message(
         event=event,
@@ -430,3 +470,26 @@ async def test_send_response_uses_delay_between_30_and_60_seconds(monkeypatch):
     assert captured["uniform_end"] == 60
     assert captured["delay"] == 45.0
     event.respond.assert_awaited_once_with("Ответ")
+
+
+async def test_send_response_cancels_when_session_expires_during_delay(monkeypatch):
+    """Проверяет, что отправка отменяется, если сессия истекла во время искусственной задержки."""
+    async def fake_sleep(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr("userbot.handlers.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("userbot.handlers.random.uniform", lambda _start, _end: 45.0)
+
+    event = SimpleNamespace(is_reply=False, respond=AsyncMock())
+    session = SimpleNamespace(is_active=lambda: False)
+
+    sent = await _send_response(
+        event,
+        "Ответ",
+        conversation_session=session,
+        sender_id=123,
+        chat_id=-100555000111,
+    )
+
+    assert sent is False
+    event.respond.assert_not_awaited()

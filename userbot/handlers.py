@@ -187,12 +187,29 @@ async def handle_new_message(
     except Exception:
         logger.exception("Ошибка генерации ответа для user_id=%s в chat_id=%s", sender_id, chat_id)
         return
+
+    if conversation_session is not None and not conversation_session.is_active():
+        logger.info(
+            "Сообщение от user_id=%s в chat_id=%s пропущено: сессия разговора истекла после генерации ответа",
+            sender_id,
+            chat_id,
+        )
+        return
+
     logger.info("Ответ для user_id=%s в chat_id=%s сгенерирован", sender_id, chat_id)
+    response_sent = await _send_response(
+        event,
+        reply_text,
+        conversation_session=conversation_session,
+        sender_id=sender_id,
+        chat_id=chat_id,
+    )
+    if not response_sent:
+        return
 
     await history.save_message(sender_id, "user", user_message)
     await history.save_message(sender_id, "assistant", reply_text)
     logger.info("История диалога для user_id=%s в chat_id=%s сохранена", sender_id, chat_id)
-    await _send_response(event, reply_text)
     logger.info("Ответ пользователю user_id=%s в chat_id=%s отправлен", sender_id, chat_id)
 
 
@@ -236,7 +253,13 @@ def _extract_chat_id(event: object) -> int | None:
     return None
 
 
-async def _send_response(event: object, text: str) -> None:
+async def _send_response(
+    event: object,
+    text: str,
+    conversation_session: object | None = None,
+    sender_id: int | None = None,
+    chat_id: int | None = None,
+) -> bool:
     """Отправляет ответ через доступный метод события с рандомной задержкой.
 
     Если входящее сообщение само является reply — отвечает с цитатой (reply),
@@ -246,6 +269,14 @@ async def _send_response(event: object, text: str) -> None:
     logger.info("Задержка перед отправкой ответа: %.1f сек", delay)
     await asyncio.sleep(delay)
 
+    if conversation_session is not None and not conversation_session.is_active():
+        logger.info(
+            "Сообщение от user_id=%s в chat_id=%s пропущено: сессия разговора истекла во время задержки перед отправкой",
+            sender_id,
+            chat_id,
+        )
+        return False
+
     is_reply = bool(getattr(event, "is_reply", False))
     method_name = "reply" if is_reply else "respond"
     method = getattr(event, method_name, None)
@@ -254,5 +285,6 @@ async def _send_response(event: object, text: str) -> None:
         result = method(text)
         if inspect.isawaitable(result):
             await result
-        return
+        return True
     logger.warning("Ответ не отправлен: у события нет метода %s", method_name)
+    return False

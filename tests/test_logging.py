@@ -3,13 +3,13 @@
 import logging
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from ai.gemini import GeminiClient, GeminiTemporaryError, PromptLoader
 from ai.history import MessageHistory
-from userbot.handlers import WhitelistFilter, handle_new_message
+from userbot.handlers import WhitelistFilter, _send_response, handle_new_message
 from userbot.scheduler import ConversationSession, TopicSelector
 
 
@@ -259,7 +259,16 @@ async def test_handle_new_message_logs_external_session_start(caplog):
     prompt_loader = SimpleNamespace(load=AsyncMock(side_effect=["Системный промт", "Промт ответа"]))
     gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ"))
     event = SimpleNamespace(sender_id=123, chat_id=-100555000111, raw_text="Привет", respond=AsyncMock())
-    session = SimpleNamespace(is_active=lambda: False, remaining_minutes=lambda: None, start=lambda _topic: None)
+    session_state = {"active": False}
+
+    def start_session(_topic: str) -> None:
+        session_state["active"] = True
+
+    session = SimpleNamespace(
+        is_active=lambda: session_state["active"],
+        remaining_minutes=lambda: 6 if session_state["active"] else None,
+        start=start_session,
+    )
 
     with caplog.at_level(logging.INFO):
         await handle_new_message(
@@ -308,6 +317,60 @@ async def test_handle_new_message_logs_skip_when_session_inactive_and_scheduler_
     assert any("сессия разговора не активна" in message for message in messages)
     event.respond.assert_not_awaited()
     gemini_client.generate_reply.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_new_message_logs_skip_when_session_expires_after_generation(caplog):
+    """Проверяет логирование отмены ответа, если сессия истекла после генерации."""
+    whitelist = WhitelistFilter(user_ids={123})
+
+    history = SimpleNamespace(
+        get_history=AsyncMock(return_value=[]),
+        save_message=AsyncMock(),
+    )
+    prompt_loader = SimpleNamespace(load=AsyncMock(side_effect=["Системный промт", "Промт ответа"]))
+    gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ"))
+    event = SimpleNamespace(sender_id=123, chat_id=-100555000111, raw_text="Привет", respond=AsyncMock())
+    session = Mock()
+    session.is_active.side_effect = [True, False]
+    session.remaining_minutes.return_value = 6
+
+    with caplog.at_level(logging.INFO):
+        await handle_new_message(
+            event=event,
+            whitelist=whitelist,
+            history=history,
+            prompt_loader=prompt_loader,
+            gemini_client=gemini_client,
+            group_chat_id=-100555000111,
+            conversation_session=session,
+        )
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("сессия разговора истекла после генерации ответа" in message for message in messages)
+    event.respond.assert_not_awaited()
+    history.save_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_send_response_logs_skip_when_session_expires_during_delay(caplog):
+    """Проверяет логирование отмены отправки, если сессия истекла во время задержки."""
+    event = SimpleNamespace(is_reply=False, respond=AsyncMock())
+    session = SimpleNamespace(is_active=lambda: False)
+
+    with caplog.at_level(logging.INFO):
+        sent = await _send_response(
+            event,
+            "Ответ",
+            conversation_session=session,
+            sender_id=123,
+            chat_id=-100555000111,
+        )
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert sent is False
+    assert any("сессия разговора истекла во время задержки перед отправкой" in message for message in messages)
+    event.respond.assert_not_awaited()
 
 
 @pytest.mark.asyncio
