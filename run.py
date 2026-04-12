@@ -146,6 +146,41 @@ async def _sync_group_activity(
         silence_watcher.update_last_activity(message_date)
 
 
+async def _log_resolved_group(
+    telegram_client: object | None,
+    group_chat_id: int | None,
+    group_target: str | None,
+) -> None:
+    """Логирует целевую группу, в которой будет работать бот."""
+    resolved_group_target = await _resolve_group_target(telegram_client, group_chat_id, group_target)
+    if resolved_group_target is None:
+        logger.warning(
+            "Не удалось определить целевую группу при инициализации: GROUP_CHAT_ID=%s, GROUP_TARGET=%s",
+            group_chat_id,
+            group_target,
+        )
+        return
+
+    group_title = getattr(resolved_group_target, "title", None) or "<без названия>"
+    group_id = getattr(resolved_group_target, "id", None)
+    group_username = getattr(resolved_group_target, "username", None)
+
+    if group_username:
+        logger.info(
+            "Целевая группа определена: title=%s, id=%s, username=@%s",
+            group_title,
+            group_id,
+            group_username,
+        )
+        return
+
+    logger.info(
+        "Целевая группа определена: title=%s, id=%s",
+        group_title,
+        group_id,
+    )
+
+
 async def _register_handlers(userbot_client: UserBotClient, whitelist: WhitelistFilter) -> None:
     """Регистрирует обработчики Telethon, если библиотека доступна."""
     telegram_client = userbot_client.client
@@ -222,6 +257,11 @@ async def main() -> None:
         telegram_client.group_chat_id = settings.group_chat_id
         telegram_client.group_target = settings.group_target
         telegram_client.dnd_hours_utc = settings.dnd_hours_utc
+        await _log_resolved_group(
+            telegram_client,
+            settings.group_chat_id,
+            settings.group_target,
+        )
 
     scheduler = AsyncIOScheduler()
 

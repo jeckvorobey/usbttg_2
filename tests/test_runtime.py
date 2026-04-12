@@ -526,6 +526,73 @@ async def test_resolve_group_target_uses_explicit_group_target_via_get_entity():
 
 
 @pytest.mark.asyncio
+async def test_log_resolved_group_logs_title_id_and_username(caplog, monkeypatch):
+    """Проверяет логирование найденной целевой группы со всеми основными полями."""
+    import logging
+    import run
+
+    resolved_entity = SimpleNamespace(title="Рабочая группа", id=1453890188, username="target_group")
+    monkeypatch.setattr(run, "_resolve_group_target", AsyncMock(return_value=resolved_entity))
+
+    with caplog.at_level(logging.INFO):
+        await run._log_resolved_group(
+            telegram_client=SimpleNamespace(),
+            group_chat_id=-1001453890188,
+            group_target="@target_group",
+        )
+
+    assert any(
+        "Целевая группа определена: title=Рабочая группа, id=1453890188, username=@target_group"
+        in record.getMessage()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_log_resolved_group_logs_title_and_id_without_username(caplog, monkeypatch):
+    """Проверяет логирование найденной группы без username."""
+    import logging
+    import run
+
+    resolved_entity = SimpleNamespace(title="Рабочая группа", id=1453890188)
+    monkeypatch.setattr(run, "_resolve_group_target", AsyncMock(return_value=resolved_entity))
+
+    with caplog.at_level(logging.INFO):
+        await run._log_resolved_group(
+            telegram_client=SimpleNamespace(),
+            group_chat_id=-1001453890188,
+            group_target=None,
+        )
+
+    assert any(
+        "Целевая группа определена: title=Рабочая группа, id=1453890188" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_log_resolved_group_logs_warning_when_group_is_unresolved(caplog, monkeypatch):
+    """Проверяет warning-лог, если целевая группа не найдена при запуске."""
+    import logging
+    import run
+
+    monkeypatch.setattr(run, "_resolve_group_target", AsyncMock(return_value=None))
+
+    with caplog.at_level(logging.WARNING):
+        await run._log_resolved_group(
+            telegram_client=SimpleNamespace(),
+            group_chat_id=-1001453890188,
+            group_target="@target_group",
+        )
+
+    assert any(
+        "Не удалось определить целевую группу при инициализации: GROUP_CHAT_ID=-1001453890188, GROUP_TARGET=@target_group"
+        in record.getMessage()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
 async def test_sync_group_activity_does_not_fail_when_entity_is_unresolved(caplog):
     """Проверяет, что ошибка резолва entity не роняет планировщик."""
     import logging
@@ -542,6 +609,62 @@ async def test_sync_group_activity_does_not_fail_when_entity_is_unresolved(caplo
 
     assert any("Не удалось получить последнее сообщение группы" in record.getMessage() for record in caplog.records)
     assert silence_watcher._last_activity is None
+
+
+@pytest.mark.asyncio
+async def test_main_logs_resolved_group_before_waiting_for_messages(monkeypatch):
+    """Проверяет, что main() логирует целевую группу до запуска ожидания сообщений."""
+    import run
+
+    settings = Settings(
+        api_id=1,
+        api_hash="hash",
+        gemini_api_key="gemini-key",
+        session_string="session-string",
+        db_path=":memory:",
+        whitelist_user_ids="123456789",
+        topics_path="data/topics.md",
+        prompts_dir="ai/prompts",
+        group_chat_id=-100555000111,
+    )
+
+    history = SimpleNamespace(init_db=AsyncMock())
+    whitelist = SimpleNamespace()
+    topic_selector = SimpleNamespace(load=AsyncMock())
+    fake_telegram_client = FakeTelegramClient("session-string", 1, "hash")
+    fake_userbot_client = SimpleNamespace(
+        start=AsyncMock(),
+        stop=AsyncMock(),
+        client=fake_telegram_client,
+    )
+    call_order: list[str] = []
+
+    async def fake_log_resolved_group(*_args, **_kwargs):
+        call_order.append("log_group")
+
+    async def fake_register_handlers(*_args, **_kwargs):
+        call_order.append("register_handlers")
+
+    async def fake_run_until_disconnected():
+        call_order.append("run_until_disconnected")
+
+    fake_telegram_client.run_until_disconnected = fake_run_until_disconnected
+
+    monkeypatch.setattr(run, "load_settings_or_exit", lambda: settings)
+    monkeypatch.setattr(run, "MessageHistory", lambda db_path: history)
+    monkeypatch.setattr(run, "WhitelistFilter", lambda user_ids: whitelist)
+    monkeypatch.setattr(run, "PromptLoader", lambda prompts_dir: object())
+    monkeypatch.setattr(run, "GeminiClient", lambda *args, **kwargs: SimpleNamespace())
+    monkeypatch.setattr(run, "TopicSelector", lambda topics_path: topic_selector)
+    monkeypatch.setattr(run, "ConversationSession", lambda duration_minutes=30: object())
+    monkeypatch.setattr(run, "AsyncIOScheduler", lambda: SimpleNamespace(add_job=lambda *a, **kw: None, start=lambda: None))
+    monkeypatch.setattr(run, "UserBotClient", lambda **kwargs: fake_userbot_client)
+    monkeypatch.setattr(run, "_log_resolved_group", fake_log_resolved_group)
+    monkeypatch.setattr(run, "_register_handlers", fake_register_handlers)
+
+    await run.main()
+
+    assert call_order == ["log_group", "register_handlers", "run_until_disconnected"]
 
 
 @pytest.mark.asyncio
