@@ -54,7 +54,7 @@ async def test_prompt_loader_preserves_full_content():
 
 @pytest.mark.asyncio
 async def test_prompt_files_target_nha_trang_group():
-    """Проверяет, что промты ориентированы на группу про Нячанг, а не на группу про Дананг."""
+    """Проверяет, что промты жёстко держат фокус на Нячанге."""
     loader = PromptLoader(prompts_dir="ai/prompts")
 
     system_prompt = await loader.load("system")
@@ -63,8 +63,26 @@ async def test_prompt_files_target_nha_trang_group():
 
     for prompt in (system_prompt, reply_prompt, start_topic_prompt):
         assert "Нячанг" in prompt
-        assert "группы «Захотели ✈ Полетели | Дананг»" not in prompt
-        assert "сообщества про жизнь и путешествия в Дананге" not in prompt
+        assert "Дананг" not in prompt
+        assert "Таиланд" not in prompt
+        assert "Камбоджу" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_prompts_forbid_comparisons_with_other_cities():
+    """Проверяет, что промты запрещают сравнения с другими городами."""
+    loader = PromptLoader(prompts_dir="ai/prompts")
+
+    system_prompt = await loader.load("system")
+    reply_prompt = await loader.load("reply")
+    start_topic_prompt = await loader.load("start_topic")
+
+    assert "Не сравнивай Нячанг с другими городами" in system_prompt
+    assert "Не сравнивай Нячанг с другими городами" in reply_prompt
+    assert "Пиши только про Нячанг" in start_topic_prompt
+    assert "короткое сравнение" not in system_prompt
+    assert "короткое сравнение" not in reply_prompt
+    assert "просьба сравнить опыт" not in start_topic_prompt
 
 
 @pytest.mark.asyncio
@@ -90,6 +108,15 @@ async def test_start_topic_prompt_avoids_editorial_post_format():
     assert "обычный вброс участника" in start_topic_prompt
     assert "Без списков" in start_topic_prompt
     assert "Без «топ-5»" in start_topic_prompt
+    assert "только про Нячанг" in start_topic_prompt
+
+
+def test_topics_file_contains_only_nha_trang_focused_topics():
+    """Проверяет, что production-темы не уводят разговор в другие города."""
+    topics = Path("data/topics.md").read_text(encoding="utf-8")
+
+    assert "Нячанг" in topics
+    assert "Дананг" not in topics
 
 
 def test_gemini_client_initializes_with_api_key():
