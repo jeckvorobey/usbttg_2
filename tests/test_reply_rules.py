@@ -69,6 +69,32 @@ async def test_reply_rules_loader_matches_exchange_keywords():
     assert matched[0].name == "Обмен валюты"
 
 
+@pytest.mark.asyncio
+async def test_reply_rules_loader_parses_one_time_markers():
+    """Проверяет, что one_time_markers парсятся из markdown-файла."""
+    content = """
+# Правила
+
+## Обмен валюты
+triggers: обмен, доллары
+one_time_markers: @antex_support, t.me/+ui-tQ4T-jrNlNmQy
+instruction: Можно мягко предложить @AntEx_support и отзывы.
+notes: Только один раз.
+""".strip()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir) / "reply_rules.md"
+        path.write_text(content, encoding="utf-8")
+
+        loader = ReplyRulesLoader(str(path))
+        await loader.load()
+
+        assert len(loader.rules) == 1
+        rule = loader.rules[0]
+        assert "@antex_support" in rule.one_time_markers
+        assert "t.me/+ui-tq4t-jrnlnmqy" in rule.one_time_markers  # casefold применяется при парсинге
+
+
 def test_settings_reads_reply_rules_path():
     """Проверяет загрузку пути к markdown-файлу правил из окружения."""
     base_env = {

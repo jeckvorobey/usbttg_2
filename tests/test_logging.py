@@ -134,7 +134,7 @@ async def test_handle_new_message_logs_successful_processing(caplog):
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
-        get_history=AsyncMock(return_value=[{"role": "user", "text": "Предыдущее"}]),
+        get_session_history=AsyncMock(return_value=[{"role": "user", "text": "Предыдущее"}]),
         save_message=AsyncMock(),
     )
     prompt_loader = SimpleNamespace(
@@ -186,7 +186,7 @@ async def test_handle_new_message_logs_gemini_error_silently(caplog):
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
-        get_history=AsyncMock(return_value=[{"role": "user", "text": "Предыдущее"}]),
+        get_session_history=AsyncMock(return_value=[{"role": "user", "text": "Предыдущее"}]),
         save_message=AsyncMock(),
     )
     prompt_loader = SimpleNamespace(
@@ -217,7 +217,7 @@ async def test_handle_new_message_logs_temporary_gemini_unavailability(caplog):
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
-        get_history=AsyncMock(return_value=[{"role": "user", "text": "Предыдущее"}]),
+        get_session_history=AsyncMock(return_value=[{"role": "user", "text": "Предыдущее"}]),
         save_message=AsyncMock(),
     )
     prompt_loader = SimpleNamespace(
@@ -254,7 +254,7 @@ async def test_handle_new_message_logs_external_session_start(caplog):
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
-        get_history=AsyncMock(return_value=[]),
+        get_session_history=AsyncMock(return_value=[]),
         save_message=AsyncMock(),
     )
     prompt_loader = SimpleNamespace(load=AsyncMock(side_effect=["Системный промт", "Промт ответа"]))
@@ -294,7 +294,7 @@ async def test_handle_new_message_logs_skip_when_session_inactive_and_scheduler_
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
-        get_history=AsyncMock(return_value=[]),
+        get_session_history=AsyncMock(return_value=[]),
         save_message=AsyncMock(),
     )
     prompt_loader = SimpleNamespace(load=AsyncMock(side_effect=["Системный промт", "Промт ответа"]))
@@ -326,7 +326,7 @@ async def test_handle_new_message_logs_skip_when_session_expires_after_generatio
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
-        get_history=AsyncMock(return_value=[]),
+        get_session_history=AsyncMock(return_value=[]),
         save_message=AsyncMock(),
     )
     prompt_loader = SimpleNamespace(load=AsyncMock(side_effect=["Системный промт", "Промт ответа"]))

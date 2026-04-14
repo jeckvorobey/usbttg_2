@@ -19,6 +19,7 @@ class ReplyRule:
     triggers: tuple[str, ...]
     instruction: str
     notes: str = ""
+    one_time_markers: tuple[str, ...] = ()
 
     def matches(self, text: str) -> bool:
         """Проверяет, срабатывает ли правило для нормализованного текста."""
@@ -75,6 +76,11 @@ class ReplyRulesLoader:
                 for part in triggers_raw.split(",")
                 if part.strip()
             )
+            one_time_markers = tuple(
+                part.strip().casefold()
+                for part in current_fields.get("one_time_markers", "").split(",")
+                if part.strip()
+            )
 
             if triggers and instruction:
                 rules.append(
@@ -83,6 +89,7 @@ class ReplyRulesLoader:
                         triggers=triggers,
                         instruction=instruction,
                         notes=notes,
+                        one_time_markers=one_time_markers,
                     )
                 )
 
@@ -109,7 +116,7 @@ class ReplyRulesLoader:
             if ":" in stripped:
                 field_name, value = stripped.split(":", maxsplit=1)
                 normalized_field = field_name.strip().lower().removeprefix("-").strip()
-                if normalized_field in {"triggers", "instruction", "notes"}:
+                if normalized_field in {"triggers", "instruction", "notes", "one_time_markers"}:
                     current_field_name = normalized_field
                     current_fields[current_field_name] = value.strip()
                     continue
