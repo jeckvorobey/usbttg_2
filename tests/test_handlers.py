@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from ai.reply_rules import ReplyRule
 from ai.gemini import GeminiTemporaryError
 from userbot.handlers import WhitelistFilter, _send_response, handle_new_message
 
@@ -444,6 +445,84 @@ async def test_handle_new_message_accepts_chat_id_from_event():
 
     gemini_client.generate_reply.assert_awaited_once()
     event.respond.assert_awaited_once_with("Ответ бота")
+
+
+async def test_handle_new_message_adds_reply_rule_hint_for_exchange_question():
+    """Проверяет, что в промт добавляется служебная подсказка по обмену валюты."""
+    whitelist = WhitelistFilter(user_ids={123})
+
+    history = SimpleNamespace(
+        get_history=AsyncMock(return_value=[]),
+        save_message=AsyncMock(),
+    )
+    prompt_loader = SimpleNamespace(
+        load=AsyncMock(side_effect=["Системный промт", "Промт ответа"])
+    )
+    reply_rules_loader = SimpleNamespace(
+        find_matches=Mock(
+            return_value=[
+                ReplyRule(
+                    name="Обмен валюты",
+                    triggers=("обмен",),
+                    instruction=(
+                        "Если сообщение действительно про обмен валюты, можно мягко "
+                        "упомянуть @AntEx_support и отзывы: "
+                        "https://t.me/+ui-tQ4T-jrNlNmQy."
+                    ),
+                )
+            ]
+        )
+    )
+    gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ бота"))
+    event = SimpleNamespace(sender_id=123, raw_text="Где лучше менять доллары?", respond=AsyncMock())
+    session = SimpleNamespace(is_active=lambda: True, remaining_minutes=lambda: 6)
+
+    await handle_new_message(
+        event=event,
+        whitelist=whitelist,
+        history=history,
+        prompt_loader=prompt_loader,
+        reply_rules_loader=reply_rules_loader,
+        gemini_client=gemini_client,
+        conversation_session=session,
+    )
+
+    call_args = gemini_client.generate_reply.call_args
+    system_prompt_used = call_args.kwargs.get("system_prompt") or call_args.args[0]
+    assert "Дополнительные указания для этого сообщения:" in system_prompt_used
+    assert "@AntEx_support" in system_prompt_used
+    assert "https://t.me/+ui-tQ4T-jrNlNmQy" in system_prompt_used
+
+
+async def test_handle_new_message_does_not_add_reply_rule_hint_without_match():
+    """Проверяет, что без совпадения дополнительных указаний в промте нет."""
+    whitelist = WhitelistFilter(user_ids={123})
+
+    history = SimpleNamespace(
+        get_history=AsyncMock(return_value=[]),
+        save_message=AsyncMock(),
+    )
+    prompt_loader = SimpleNamespace(
+        load=AsyncMock(side_effect=["Системный промт", "Промт ответа"])
+    )
+    reply_rules_loader = SimpleNamespace(find_matches=Mock(return_value=[]))
+    gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ бота"))
+    event = SimpleNamespace(sender_id=123, raw_text="Какой район лучше для жизни?", respond=AsyncMock())
+    session = SimpleNamespace(is_active=lambda: True, remaining_minutes=lambda: 6)
+
+    await handle_new_message(
+        event=event,
+        whitelist=whitelist,
+        history=history,
+        prompt_loader=prompt_loader,
+        reply_rules_loader=reply_rules_loader,
+        gemini_client=gemini_client,
+        conversation_session=session,
+    )
+
+    call_args = gemini_client.generate_reply.call_args
+    system_prompt_used = call_args.kwargs.get("system_prompt") or call_args.args[0]
+    assert "Дополнительные указания для этого сообщения:" not in system_prompt_used
 
 
 async def test_send_response_uses_delay_between_30_and_60_seconds(monkeypatch):

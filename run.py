@@ -9,6 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from ai.gemini import GeminiClient, PromptLoader
 from ai.history import MessageHistory
+from ai.reply_rules import ReplyRulesLoader
 from core.config import load_settings_or_exit
 from core.logging import setup_logging
 from userbot.client import UserBotClient
@@ -219,6 +220,8 @@ async def main() -> None:
     logger.info("Whitelist инициализирован из WHITELIST_USER_IDS: %s пользователей", len(whitelist_ids))
 
     prompt_loader = PromptLoader(settings.prompts_dir)
+    reply_rules_loader = ReplyRulesLoader(settings.reply_rules_path)
+    await reply_rules_loader.load()
     logger.info("Инициализация Gemini клиента")
     gemini_client = GeminiClient(
         settings.gemini_api_key,
@@ -250,6 +253,7 @@ async def main() -> None:
         logger.info("Привязка runtime-зависимостей к Telegram-клиенту")
         telegram_client.message_history = history
         telegram_client.prompt_loader = prompt_loader
+        telegram_client.reply_rules_loader = reply_rules_loader
         telegram_client.gemini_client = gemini_client
         telegram_client.topic_selector = topic_selector
         telegram_client.conversation_session = conversation_session

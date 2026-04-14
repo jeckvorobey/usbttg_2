@@ -52,6 +52,46 @@ async def test_prompt_loader_preserves_full_content():
         assert result == content
 
 
+@pytest.mark.asyncio
+async def test_prompt_files_target_nha_trang_group():
+    """Проверяет, что промты ориентированы на группу про Нячанг, а не на группу про Дананг."""
+    loader = PromptLoader(prompts_dir="ai/prompts")
+
+    system_prompt = await loader.load("system")
+    reply_prompt = await loader.load("reply")
+    start_topic_prompt = await loader.load("start_topic")
+
+    for prompt in (system_prompt, reply_prompt, start_topic_prompt):
+        assert "Нячанг" in prompt
+        assert "группы «Захотели ✈ Полетели | Дананг»" not in prompt
+        assert "сообщества про жизнь и путешествия в Дананге" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_system_and_reply_prompts_allow_short_multi_sentence_replies():
+    """Проверяет, что промты больше не требуют ответа ровно в одно предложение."""
+    loader = PromptLoader(prompts_dir="ai/prompts")
+
+    system_prompt = await loader.load("system")
+    reply_prompt = await loader.load("reply")
+
+    assert "1–3 коротких предложения" in system_prompt
+    assert "Одно предложение" not in reply_prompt
+    assert "не более 3 коротких предложений" in reply_prompt
+
+
+@pytest.mark.asyncio
+async def test_start_topic_prompt_avoids_editorial_post_format():
+    """Проверяет, что старт темы оформлен как живая реплика участника, а не пост канала."""
+    loader = PromptLoader(prompts_dir="ai/prompts")
+
+    start_topic_prompt = await loader.load("start_topic")
+
+    assert "обычный вброс участника" in start_topic_prompt
+    assert "Без списков" in start_topic_prompt
+    assert "Без «топ-5»" in start_topic_prompt
+
+
 def test_gemini_client_initializes_with_api_key():
     """Проверяет, что GeminiClient инициализируется и хранит имя модели."""
     client = GeminiClient(api_key="test_key_123", model_name="gemini-1.5-flash")

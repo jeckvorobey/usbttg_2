@@ -9,6 +9,7 @@ from typing import Any
 
 from ai.gemini import GeminiClient, GeminiGenerationError, GeminiTemporaryError, PromptLoader
 from ai.history import MessageHistory
+from ai.reply_rules import ReplyRulesLoader
 from userbot.scheduler import SilenceWatcher, is_dnd_active_utc
 
 
@@ -48,6 +49,7 @@ async def handle_new_message(
     whitelist: WhitelistFilter,
     history: MessageHistory | None = None,
     prompt_loader: PromptLoader | None = None,
+    reply_rules_loader: ReplyRulesLoader | None = None,
     gemini_client: GeminiClient | None = None,
     silence_watcher: SilenceWatcher | None = None,
     conversation_session: object | None = None,
@@ -111,6 +113,7 @@ async def handle_new_message(
 
     history = history or getattr(telethon_client, "message_history", None)
     prompt_loader = prompt_loader or getattr(telethon_client, "prompt_loader", None)
+    reply_rules_loader = reply_rules_loader or getattr(telethon_client, "reply_rules_loader", None)
     gemini_client = gemini_client or getattr(telethon_client, "gemini_client", None)
     conversation_session = conversation_session or getattr(telethon_client, "conversation_session", None)
     if history is None or prompt_loader is None or gemini_client is None:
@@ -159,6 +162,7 @@ async def handle_new_message(
     )
     system_prompt = await prompt_loader.load("system")
     reply_prompt = await prompt_loader.load("reply")
+    reply_rules_hint = _build_reply_rules_hint(user_message, reply_rules_loader)
     wind_down_hint = ""
     if conversation_session is not None and session_is_active:
         remaining = conversation_session.remaining_minutes()
@@ -170,6 +174,8 @@ async def handle_new_message(
             )
     logger.info("Промты для ответа user_id=%s в chat_id=%s загружены", sender_id, chat_id)
     full_prompt = f"{system_prompt}\n\n{reply_prompt}"
+    if reply_rules_hint:
+        full_prompt = f"{full_prompt}\n\n{reply_rules_hint}"
     if wind_down_hint:
         full_prompt = f"{full_prompt}\n\n{wind_down_hint}"
     try:
@@ -251,6 +257,24 @@ def _extract_chat_id(event: object) -> int | None:
         return chat_peer_id
 
     return None
+
+
+def _build_reply_rules_hint(
+    user_message: str,
+    reply_rules_loader: ReplyRulesLoader | None,
+) -> str:
+    """Формирует служебную подсказку по сработавшим правилам ответа."""
+    if reply_rules_loader is None:
+        return ""
+
+    matched_rules = reply_rules_loader.find_matches(user_message)
+    if not matched_rules:
+        return ""
+
+    lines = ["Дополнительные указания для этого сообщения:"]
+    for rule in matched_rules:
+        lines.append(f"- {rule.instruction}")
+    return "\n".join(lines)
 
 
 async def _send_response(
