@@ -10,6 +10,14 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def _ensure_utc(moment: datetime) -> datetime:
+    """Нормализует datetime к timezone-aware UTC."""
+    if moment.tzinfo is None:
+        local_tz = datetime.now().astimezone().tzinfo or UTC
+        moment = moment.replace(tzinfo=local_tz)
+    return moment.astimezone(UTC)
+
+
 def is_dnd_active_utc(dnd_hours_utc: str | None, now_utc: datetime | None = None) -> bool:
     """Проверяет, попадает ли текущее UTC-время в интервал режима не беспокоить."""
     if not dnd_hours_utc:
@@ -84,12 +92,12 @@ class SilenceWatcher:
 
     def __init__(self) -> None:
         """Инициализирует трекер тишины с отдельной стартовой точкой процесса."""
-        self._started_at: datetime = datetime.now()
+        self._started_at: datetime = datetime.now(UTC)
         self._last_activity: datetime | None = None
 
     def update_last_activity(self, activity_at: datetime | None = None) -> None:
         """Фиксирует момент как время последней активности в группе."""
-        moment = activity_at or datetime.now()
+        moment = _ensure_utc(activity_at or datetime.now(UTC))
         if self._last_activity is None or moment.timestamp() >= self._last_activity.timestamp():
             self._last_activity = moment
         logger.debug("Активность в группе обновлена: %s", self._last_activity)
@@ -106,7 +114,7 @@ class SilenceWatcher:
             или активности ещё не было вообще.
         """
         last_activity = self._last_activity or self._started_at
-        elapsed_minutes = (datetime.now().timestamp() - last_activity.timestamp()) / 60
+        elapsed_minutes = (datetime.now(UTC).timestamp() - last_activity.timestamp()) / 60
         exceeded = elapsed_minutes >= timeout_minutes
         logger.debug("Тишина: прошло %.1f мин из %s мин порога", elapsed_minutes, timeout_minutes)
         return exceeded
@@ -135,7 +143,7 @@ class ConversationSession:
             topic: Тема разговора для данной сессии.
         """
         self.current_topic = topic
-        self._start_time = datetime.now()
+        self._start_time = datetime.now(UTC)
         self._active = True
         logger.info("Сессия разговора запущена: topic=%s, duration_minutes=%s", topic, self.duration_minutes)
 
@@ -156,7 +164,7 @@ class ConversationSession:
         """
         if not self._active or self._start_time is None:
             return None
-        elapsed = (datetime.now() - self._start_time).total_seconds()
+        elapsed = (datetime.now(UTC) - self._start_time).total_seconds()
         remaining = self.duration_minutes * 60 - elapsed
         return max(0, int(remaining // 60))
 
@@ -170,7 +178,7 @@ class ConversationSession:
         if not self._active or self._start_time is None:
             return False
 
-        elapsed_seconds = (datetime.now() - self._start_time).total_seconds()
+        elapsed_seconds = (datetime.now(UTC) - self._start_time).total_seconds()
         if elapsed_seconds >= self.duration_minutes * 60:
             logger.info("Сессия разговора истекла по времени")
             self.stop()

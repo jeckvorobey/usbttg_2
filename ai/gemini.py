@@ -67,6 +67,7 @@ class GeminiClient:
         max_retries: int = 3,
         retry_backoff_seconds: float = 1.0,
         retry_jitter_seconds: float = 0.0,
+        request_timeout_seconds: float = 45.0,
     ) -> None:
         """
         Инициализирует клиент Gemini.
@@ -79,6 +80,7 @@ class GeminiClient:
             max_retries: Максимальное число попыток для временных ошибок Gemini API.
             retry_backoff_seconds: Базовая задержка между повторными попытками.
             retry_jitter_seconds: Максимальная случайная добавка к задержке между попытками.
+            request_timeout_seconds: Максимальное время ожидания одного запроса к Gemini.
         """
         self.api_key = api_key
         self.model_name = model_name
@@ -87,6 +89,7 @@ class GeminiClient:
         self.max_retries = max(1, max_retries)
         self.retry_backoff_seconds = max(0.0, retry_backoff_seconds)
         self.retry_jitter_seconds = max(0.0, retry_jitter_seconds)
+        self.request_timeout_seconds = max(0.1, request_timeout_seconds)
         self._client: Any | None = None
         self._types: Any | None = None
 
@@ -144,18 +147,22 @@ class GeminiClient:
             for attempt in range(1, self.max_retries + 1):
                 try:
                     logger.debug(
-                        "Отправка запроса в Gemini: модель=%s, длина_prompt=%s, попытка=%s/%s, proxy=%s",
+                        "Отправка запроса в Gemini: модель=%s, длина_prompt=%s, попытка=%s/%s, timeout=%.1f сек, proxy=%s",
                         current_model_name,
                         len(prompt),
                         attempt,
                         self.max_retries,
+                        self.request_timeout_seconds,
                         self._describe_proxy(),
                     )
-                    response = await asyncio.to_thread(
-                        client.models.generate_content,
-                        model=current_model_name,
-                        contents=prompt,
-                        config=config,
+                    response = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            client.models.generate_content,
+                            model=current_model_name,
+                            contents=prompt,
+                            config=config,
+                        ),
+                        timeout=self.request_timeout_seconds,
                     )
                     text = getattr(response, "text", "")
                     normalized_text = str(text).strip()
@@ -166,7 +173,12 @@ class GeminiClient:
                     )
                     return normalized_text
                 except Exception as exc:
-                    last_error = exc
+                    if isinstance(exc, TimeoutError):
+                        last_error = GeminiTemporaryError(
+                            f"Gemini API не ответил за {self.request_timeout_seconds:.1f} сек"
+                        )
+                    else:
+                        last_error = exc
                     if self._is_temporary_error(exc):
                         is_last_attempt_for_model = attempt >= self.max_retries
                         has_fallback = model_index < len(model_names) - 1
@@ -174,12 +186,13 @@ class GeminiClient:
                         if not is_last_attempt_for_model:
                             delay = self._calculate_retry_delay(attempt)
                             logger.warning(
-                                "Gemini временно недоступен: модель=%s, status=%s, попытка=%s/%s, повтор через %.2f сек, proxy=%s",
+                                "Gemini временно недоступен: модель=%s, status=%s, попытка=%s/%s, повтор через %.2f сек, timeout=%.1f сек, proxy=%s",
                                 current_model_name,
                                 self._extract_status_code(exc),
                                 attempt,
                                 self.max_retries,
                                 delay,
+                                self.request_timeout_seconds,
                                 self._describe_proxy(),
                             )
                             await asyncio.sleep(delay)
@@ -197,13 +210,14 @@ class GeminiClient:
                             break
 
                         logger.warning(
-                            "Gemini временно недоступен после %s попыток: модель=%s, status=%s, proxy=%s",
+                            "Gemini временно недоступен после %s попыток: модель=%s, status=%s, timeout=%.1f сек, proxy=%s",
                             self.max_retries,
                             current_model_name,
                             self._extract_status_code(exc),
+                            self.request_timeout_seconds,
                             self._describe_proxy(),
                         )
-                        raise GeminiTemporaryError("Gemini API временно недоступен") from exc
+                        raise GeminiTemporaryError(str(last_error)) from exc
 
                     raise GeminiGenerationError("Ошибка генерации ответа через Gemini") from exc
 
@@ -288,6 +302,8 @@ class GeminiClient:
         """Определяет, является ли ошибка временной и подходит ли для повторной попытки."""
         status_code = cls._extract_status_code(exc)
         if status_code in TRANSIENT_STATUS_CODES:
+            return True
+        if isinstance(exc, TimeoutError):
             return True
 
         message = str(exc).upper()

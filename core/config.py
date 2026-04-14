@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     gemini_max_retries: int = 3
     gemini_retry_backoff_seconds: float = 1.0
     gemini_retry_jitter_seconds: float = 0.3
+    gemini_request_timeout_seconds: float = 45.0
 
     # Telethon строковая сессия
     session_string: RequiredStr
@@ -73,6 +74,7 @@ class Settings(BaseSettings):
     # Пути к файлам данных
     db_path: str = "data/history.db"
     topics_path: str = "data/topics.md"
+    reply_rules_path: str = "data/reply_rules.md"
     prompts_dir: str = "ai/prompts"
 
     # Whitelist разрешённых Telegram user_id через запятую

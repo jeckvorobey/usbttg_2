@@ -52,6 +52,118 @@ async def test_prompt_loader_preserves_full_content():
         assert result == content
 
 
+@pytest.mark.asyncio
+async def test_prompt_files_target_nha_trang_group():
+    """Проверяет, что промты жёстко держат фокус на Нячанге."""
+    loader = PromptLoader(prompts_dir="ai/prompts")
+
+    system_prompt = await loader.load("system")
+    reply_prompt = await loader.load("reply")
+    start_topic_prompt = await loader.load("start_topic")
+
+    for prompt in (system_prompt, reply_prompt, start_topic_prompt):
+        assert "Нячанг" in prompt
+        assert "Дананг" not in prompt
+        assert "Таиланд" not in prompt
+        assert "Камбоджу" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_prompts_forbid_comparisons_with_other_cities():
+    """Проверяет, что промты запрещают сравнения с другими городами."""
+    loader = PromptLoader(prompts_dir="ai/prompts")
+
+    system_prompt = await loader.load("system")
+    reply_prompt = await loader.load("reply")
+    start_topic_prompt = await loader.load("start_topic")
+
+    assert "Не сравнивай Нячанг с другими городами" in system_prompt
+    assert "Не сравнивай Нячанг с другими городами" in reply_prompt
+    assert "Пиши только про Нячанг" in start_topic_prompt
+    assert "короткое сравнение" not in system_prompt
+    assert "короткое сравнение" not in reply_prompt
+    assert "просьба сравнить опыт" not in start_topic_prompt
+
+
+@pytest.mark.asyncio
+async def test_system_and_reply_prompts_allow_short_multi_sentence_replies():
+    """Проверяет, что промты больше не требуют ответа ровно в одно предложение."""
+    loader = PromptLoader(prompts_dir="ai/prompts")
+
+    system_prompt = await loader.load("system")
+    reply_prompt = await loader.load("reply")
+
+    assert "1–3 коротких предложения" in system_prompt
+    assert "Одно предложение" not in reply_prompt
+    assert "не более 3 коротких предложений" in reply_prompt
+
+
+@pytest.mark.asyncio
+async def test_start_topic_prompt_avoids_editorial_post_format():
+    """Проверяет, что старт темы оформлен как живая реплика участника, а не пост канала."""
+    loader = PromptLoader(prompts_dir="ai/prompts")
+
+    start_topic_prompt = await loader.load("start_topic")
+
+    assert "обычный вброс участника" in start_topic_prompt
+    assert "Без списков" in start_topic_prompt
+    assert "Без «топ-5»" in start_topic_prompt
+    assert "только про Нячанг" in start_topic_prompt
+    assert "короткий вопрос" in start_topic_prompt
+
+
+@pytest.mark.asyncio
+async def test_start_topic_prompt_requires_question_without_ready_made_advice():
+    """Проверяет, что автозапуск темы требует только нейтральный вопрос без готового ответа."""
+    loader = PromptLoader(prompts_dir="ai/prompts")
+
+    start_topic_prompt = await loader.load("start_topic")
+
+    assert "Только один короткий вопрос" in start_topic_prompt
+    assert "Не пиши готовый ответ" in start_topic_prompt
+    assert "Не давай совет" in start_topic_prompt
+    assert "Не используй категоричные формулировки" in start_topic_prompt
+
+
+@pytest.mark.asyncio
+async def test_prompts_describe_questions_more_precisely():
+    """Проверяет, что промты разрешают уместный вопрос, но запрещают формальный подвешенный вопрос."""
+    loader = PromptLoader(prompts_dir="ai/prompts")
+
+    system_prompt = await loader.load("system")
+    reply_prompt = await loader.load("reply")
+    start_topic_prompt = await loader.load("start_topic")
+    wind_down_hint = await loader.load("wind_down_hint")
+
+    assert "действительно уместен по смыслу" in system_prompt
+    assert "можно закончить одним коротким вопросом" in reply_prompt
+    assert "формально только ради продолжения разговора" in reply_prompt
+    assert "короткий вопрос" in start_topic_prompt
+    assert "Не заканчивай вопросом" in wind_down_hint
+
+
+@pytest.mark.asyncio
+async def test_system_and_reply_prompts_require_non_intrusive_service_mentions():
+    """Проверяет, что промты запрещают навязчивые и неуместные упоминания сервисов."""
+    loader = PromptLoader(prompts_dir="ai/prompts")
+
+    system_prompt = await loader.load("system")
+    reply_prompt = await loader.load("reply")
+
+    assert "Не упоминай @AntEx_support" in system_prompt
+    assert "не спрашивал про перевод на карту" in system_prompt
+    assert "Не делай разговор навязчивым" in reply_prompt
+    assert "не возвращай разговор к одному и тому же офферу" in reply_prompt
+
+
+def test_topics_file_contains_only_nha_trang_focused_topics():
+    """Проверяет, что production-темы не уводят разговор в другие города."""
+    topics = Path("data/topics.md").read_text(encoding="utf-8")
+
+    assert "Нячанг" in topics
+    assert "Дананг" not in topics
+
+
 def test_gemini_client_initializes_with_api_key():
     """Проверяет, что GeminiClient инициализируется и хранит имя модели."""
     client = GeminiClient(api_key="test_key_123", model_name="gemini-1.5-flash")
@@ -366,3 +478,59 @@ async def test_gemini_client_adds_jitter_to_retry_delay(monkeypatch):
         )
 
     assert delays == [0.75]
+
+
+@pytest.mark.asyncio
+async def test_gemini_client_retries_on_request_timeout(monkeypatch):
+    """Проверяет, что таймаут запроса считается временной ошибкой и ретраится."""
+
+    class FakeModels:
+        def generate_content(self, **kwargs):
+            return SimpleNamespace(text="Ответ после таймаута")
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            self.models = FakeModels()
+
+    class FakeGenerateContentConfig:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+    fake_types = SimpleNamespace(GenerateContentConfig=FakeGenerateContentConfig)
+    fake_genai = SimpleNamespace(Client=FakeClient, types=fake_types)
+
+    delays: list[float] = []
+    wait_for_calls = {"count": 0}
+
+    async def fake_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    async def fake_wait_for(awaitable, timeout: float):
+        wait_for_calls["count"] += 1
+        if wait_for_calls["count"] == 1:
+            awaitable.close()
+            raise TimeoutError
+        return await awaitable
+
+    monkeypatch.setattr("ai.gemini._import_google_genai", lambda: fake_genai)
+    monkeypatch.setattr("ai.gemini.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("ai.gemini.asyncio.wait_for", fake_wait_for)
+
+    client = GeminiClient(
+        api_key="test_key_123",
+        model_name="gemini-2.5-flash",
+        max_retries=2,
+        retry_backoff_seconds=0.5,
+        retry_jitter_seconds=0.0,
+        request_timeout_seconds=15.0,
+    )
+
+    result = await client.generate_reply(
+        system_prompt="Системная роль",
+        history=[],
+        user_message="Привет",
+    )
+
+    assert result == "Ответ после таймаута"
+    assert delays == [0.5]
+    assert wait_for_calls["count"] == 2
