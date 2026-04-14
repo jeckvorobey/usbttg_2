@@ -87,6 +87,8 @@ def test_session_active_after_start():
     session = ConversationSession(duration_minutes=30)
     session.start(topic="Любимые фильмы")
     assert session.is_active() is True
+    assert session._start_time is not None
+    assert session._start_time.tzinfo == UTC
 
 
 def test_session_stores_current_topic():

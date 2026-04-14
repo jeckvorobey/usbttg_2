@@ -1,6 +1,6 @@
 """Тесты для модуля хранения истории диалогов."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
@@ -124,6 +124,25 @@ async def test_get_session_history_filters_by_session_start(history):
     texts = [m["text"] for m in messages]
     assert "Новое" in texts
     assert "Старое" not in texts
+
+
+async def test_get_session_history_filters_timezone_aware_session_start(history):
+    """Проверяет фильтрацию истории сессии при timezone-aware времени старта."""
+    conn = await history._get_connection()
+    await conn.executemany(
+        "INSERT INTO messages (user_id, chat_id, role, text, created_at) VALUES (?, ?, ?, ?, ?)",
+        [
+            (1, -100555, "user", "До старта", "2026-04-14 08:46:59"),
+            (1, -100555, "assistant", "После старта", "2026-04-14 08:49:05"),
+        ],
+    )
+    await conn.commit()
+
+    session_start = datetime(2026, 4, 14, 11, 47, 16, tzinfo=timezone(timedelta(hours=3)))
+
+    messages = await history.get_session_history(chat_id=-100555, session_start=session_start)
+
+    assert [item["text"] for item in messages] == ["После старта"]
 
 
 async def test_get_session_history_returns_empty_for_none_chat_id(history):

@@ -1,13 +1,21 @@
 """Модуль хранения истории диалогов в SQLite через aiosqlite."""
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import aiosqlite
 
 
 logger = logging.getLogger(__name__)
+
+
+def _to_utc_sqlite_timestamp(value: datetime) -> str:
+    """Приводит datetime к UTC-строке в формате SQLite."""
+    if value.tzinfo is None:
+        local_tz = datetime.now().astimezone().tzinfo or UTC
+        value = value.replace(tzinfo=local_tz)
+    return value.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
 class MessageHistory:
@@ -66,9 +74,13 @@ class MessageHistory:
             len(text),
         )
         connection = await self._get_connection()
+        created_at = _to_utc_sqlite_timestamp(datetime.now(UTC))
         await connection.execute(
-            "INSERT INTO messages (user_id, chat_id, role, text) VALUES (?, ?, ?, ?)",
-            (user_id, chat_id, role, text),
+            """
+            INSERT INTO messages (user_id, chat_id, role, text, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (user_id, chat_id, role, text, created_at),
         )
         await connection.commit()
         logger.info("Сообщение сохранено в историю для user_id=%s", user_id)
@@ -136,11 +148,11 @@ class MessageHistory:
         connection = await self._get_connection()
 
         if session_start is not None:
-            session_start_str = session_start.strftime("%Y-%m-%d %H:%M:%S")
+            session_start_str = _to_utc_sqlite_timestamp(session_start)
             async with connection.execute(
                 """
                 SELECT role, text FROM messages
-                WHERE chat_id = ? AND created_at >= ?
+                WHERE chat_id = ? AND datetime(created_at) >= datetime(?)
                 ORDER BY id ASC
                 LIMIT ?
                 """,
