@@ -52,7 +52,7 @@ Telegram userbot на базе Telethon, который:
   → отправка ответа
 
 Таймер APScheduler
-  → userbot/scheduler.py: выбор случайной темы из data/topics.md
+  → userbot/scheduler.py: выбор случайной темы из ai/prompts/topics.md
   → ai/gemini.py: генерация начала разговора
   → отправка сообщения в группу
   → сессия активна 30 минут
@@ -78,7 +78,7 @@ Telegram userbot на базе Telethon, который:
 - только SQLite, без PostgreSQL, Redis и других СУБД;
 - промты не хардкодить, а загружать из `ai/prompts/*.md`;
 - whitelist читать из `data/whitelist.md`;
-- темы читать из `data/topics.md`;
+- темы читать из `ai/prompts/topics.md`;
 - для входа использовать `SESSION_STRING` из `.env`;
 - `SESSION_STRING` не логировать и не коммитить.
 
@@ -94,7 +94,7 @@ Telegram userbot на базе Telethon, который:
 | Путь                                | Описание                         |
 |-------------------------------------|----------------------------------|
 | `data/whitelist.md`                 | Telegram user_id для ответов     |
-| `data/topics.md`                    | Темы для инициирования разговора |
+| `ai/prompts/topics.md`                    | Темы для инициирования разговора |
 | `ai/prompts/system.md`              | Системный промт для Gemini       |
 | `ai/prompts/reply.md`               | Промт для генерации ответа       |
 | `ai/prompts/start_topic.md`         | Промт для начала разговора       |

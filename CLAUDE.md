@@ -77,7 +77,7 @@ Telegram userbot на базе Telethon, который:
 - **Только SQLite** — никаких PostgreSQL, Redis и других СУБД
 - **Промты из файлов** — промты не хардкодятся в коде, загружаются из `ai/prompts/*.md` в runtime
 - **Whitelist из файла** — список пользователей загружается из `data/whitelist.md`
-- **Темы из файла** — список тем загружается из `data/topics.md`
+- **Темы из файла** — список тем загружается из `ai/prompts/topics.md`
 - **Строковая сессия** — использовать `SESSION_STRING` из `.env`
 - **Секреты** — `SESSION_STRING` не публиковать и не логировать
 
@@ -86,7 +86,7 @@ Telegram userbot на базе Telethon, который:
 | Путь                               | Описание                        |
 |------------------------------------|---------------------------------|
 | `data/whitelist.md`                | Telegram user_id для ответов    |
-| `data/topics.md`                   | Темы для инициирования разговора|
+| `ai/prompts/topics.md`                   | Темы для инициирования разговора|
 | `ai/prompts/system.md`             | Системный промт для Gemini      |
 | `ai/prompts/reply.md`              | Промт для генерации ответа      |
 | `ai/prompts/start_topic.md`        | Промт для начала разговора      |

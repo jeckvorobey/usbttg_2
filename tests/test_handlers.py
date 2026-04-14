@@ -61,7 +61,7 @@ async def test_handle_new_message_replies_for_whitelisted_user():
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
-        get_history=AsyncMock(return_value=[{"role": "user", "text": "Предыдущее"}]),
+        get_session_history=AsyncMock(return_value=[{"role": "user", "text": "Предыдущее"}]),
         save_message=AsyncMock(),
     )
     prompt_loader = SimpleNamespace(
@@ -108,7 +108,7 @@ async def test_handle_new_message_silent_on_gemini_error():
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
-        get_history=AsyncMock(return_value=[{"role": "user", "text": "Предыдущее"}]),
+        get_session_history=AsyncMock(return_value=[{"role": "user", "text": "Предыдущее"}]),
         save_message=AsyncMock(),
     )
     prompt_loader = SimpleNamespace(
@@ -136,7 +136,7 @@ async def test_handle_new_message_silent_on_temporary_gemini_error():
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
-        get_history=AsyncMock(return_value=[{"role": "user", "text": "Предыдущее"}]),
+        get_session_history=AsyncMock(return_value=[{"role": "user", "text": "Предыдущее"}]),
         save_message=AsyncMock(),
     )
     prompt_loader = SimpleNamespace(
@@ -163,7 +163,7 @@ async def test_handle_new_message_skips_when_session_expires_after_generation():
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
-        get_history=AsyncMock(return_value=[]),
+        get_session_history=AsyncMock(return_value=[]),
         save_message=AsyncMock(),
     )
     prompt_loader = SimpleNamespace(
@@ -194,7 +194,7 @@ async def test_wind_down_hint_included_when_two_minutes_remain():
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
-        get_history=AsyncMock(return_value=[]),
+        get_session_history=AsyncMock(return_value=[]),
         save_message=AsyncMock(),
     )
     prompt_loader = SimpleNamespace(
@@ -224,7 +224,7 @@ async def test_wind_down_hint_not_included_when_time_is_enough():
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
-        get_history=AsyncMock(return_value=[]),
+        get_session_history=AsyncMock(return_value=[]),
         save_message=AsyncMock(),
     )
     prompt_loader = SimpleNamespace(
@@ -255,7 +255,7 @@ async def test_handle_new_message_replies_when_session_is_missing():
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
-        get_history=AsyncMock(return_value=[]),
+        get_session_history=AsyncMock(return_value=[]),
         save_message=AsyncMock(),
     )
     prompt_loader = SimpleNamespace(
@@ -275,14 +275,14 @@ async def test_handle_new_message_replies_when_session_is_missing():
 
     gemini_client.generate_reply.assert_awaited_once()
     event.respond.assert_awaited_once_with("Ответ")
-    history.get_history.assert_awaited_once()
+    history.get_session_history.assert_awaited_once()
 
 async def test_handle_new_message_starts_session_when_it_is_inactive():
     """Проверяет, что первое сообщение из whitelist запускает локальную сессию."""
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
-        get_history=AsyncMock(return_value=[]),
+        get_session_history=AsyncMock(return_value=[]),
         save_message=AsyncMock(),
     )
     prompt_loader = SimpleNamespace(load=AsyncMock(side_effect=["Системный промт", "Промт ответа"]))
@@ -315,7 +315,7 @@ async def test_handle_new_message_starts_session_when_it_is_inactive():
     session.start.assert_called_once_with("Привет")
     gemini_client.generate_reply.assert_awaited_once()
     event.respond.assert_awaited_once_with("Ответ")
-    history.get_history.assert_awaited_once()
+    history.get_session_history.assert_awaited_once()
     assert history.save_message.await_count == 2
 
 
@@ -324,7 +324,7 @@ async def test_handle_new_message_does_not_start_session_from_message_when_sched
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
-        get_history=AsyncMock(return_value=[]),
+        get_session_history=AsyncMock(return_value=[]),
         save_message=AsyncMock(),
     )
     prompt_loader = SimpleNamespace(load=AsyncMock(side_effect=["Системный промт", "Промт ответа"]))
@@ -348,7 +348,7 @@ async def test_handle_new_message_does_not_start_session_from_message_when_sched
     session.start.assert_not_called()
     gemini_client.generate_reply.assert_not_awaited()
     event.respond.assert_not_awaited()
-    history.get_history.assert_not_awaited()
+    history.get_session_history.assert_not_awaited()
     history.save_message.assert_not_awaited()
 
 
@@ -357,7 +357,7 @@ async def test_handle_new_message_skips_when_dnd_is_active():
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
-        get_history=AsyncMock(return_value=[]),
+        get_session_history=AsyncMock(return_value=[]),
         save_message=AsyncMock(),
     )
     prompt_loader = SimpleNamespace(load=AsyncMock(side_effect=["Системный промт", "Промт ответа"]))
@@ -381,7 +381,7 @@ async def test_handle_new_message_skips_when_dnd_is_active():
     silence_watcher.update_last_activity.assert_called_once_with()
     gemini_client.generate_reply.assert_not_awaited()
     event.respond.assert_not_awaited()
-    history.get_history.assert_not_awaited()
+    history.get_session_history.assert_not_awaited()
 
 
 async def test_handle_new_message_ignores_other_group_chat():
@@ -389,7 +389,7 @@ async def test_handle_new_message_ignores_other_group_chat():
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
-        get_history=AsyncMock(return_value=[]),
+        get_session_history=AsyncMock(return_value=[]),
         save_message=AsyncMock(),
     )
     prompt_loader = SimpleNamespace(load=AsyncMock())
@@ -410,7 +410,7 @@ async def test_handle_new_message_ignores_other_group_chat():
     silence_watcher.update_last_activity.assert_not_called()
     gemini_client.generate_reply.assert_not_awaited()
     event.respond.assert_not_awaited()
-    history.get_history.assert_not_awaited()
+    history.get_session_history.assert_not_awaited()
 
 
 async def test_handle_new_message_accepts_chat_id_from_event():
@@ -418,7 +418,7 @@ async def test_handle_new_message_accepts_chat_id_from_event():
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
-        get_history=AsyncMock(return_value=[]),
+        get_session_history=AsyncMock(return_value=[]),
         save_message=AsyncMock(),
     )
     prompt_loader = SimpleNamespace(
@@ -452,7 +452,7 @@ async def test_handle_new_message_adds_reply_rule_hint_for_exchange_question():
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
-        get_history=AsyncMock(return_value=[]),
+        get_session_history=AsyncMock(return_value=[]),
         save_message=AsyncMock(),
     )
     prompt_loader = SimpleNamespace(
@@ -499,7 +499,7 @@ async def test_handle_new_message_does_not_add_reply_rule_hint_without_match():
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
-        get_history=AsyncMock(return_value=[]),
+        get_session_history=AsyncMock(return_value=[]),
         save_message=AsyncMock(),
     )
     prompt_loader = SimpleNamespace(
@@ -523,6 +523,125 @@ async def test_handle_new_message_does_not_add_reply_rule_hint_without_match():
     call_args = gemini_client.generate_reply.call_args
     system_prompt_used = call_args.kwargs.get("system_prompt") or call_args.args[0]
     assert "Дополнительные указания для этого сообщения:" not in system_prompt_used
+
+
+async def test_reply_rule_hint_suppressed_when_marker_in_session_history():
+    """Проверяет, что правило не добавляется в промт если маркер уже есть в истории сессии."""
+    whitelist = WhitelistFilter(user_ids={123})
+
+    history = SimpleNamespace(
+        get_session_history=AsyncMock(
+            return_value=[{"role": "user", "text": "Спросил про @AntEx_support вчера"}]
+        ),
+        save_message=AsyncMock(),
+    )
+    prompt_loader = SimpleNamespace(
+        load=AsyncMock(side_effect=["Системный промт", "Промт ответа"])
+    )
+    reply_rules_loader = SimpleNamespace(
+        find_matches=Mock(
+            return_value=[
+                ReplyRule(
+                    name="Обмен валюты",
+                    triggers=("обмен",),
+                    instruction="Упомяни @AntEx_support и отзывы.",
+                    one_time_markers=("@antex_support",),
+                )
+            ]
+        )
+    )
+    gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ бота"))
+    event = SimpleNamespace(sender_id=123, raw_text="Где лучше менять доллары?", respond=AsyncMock())
+    session = SimpleNamespace(is_active=lambda: True, remaining_minutes=lambda: 6)
+
+    await handle_new_message(
+        event=event,
+        whitelist=whitelist,
+        history=history,
+        prompt_loader=prompt_loader,
+        reply_rules_loader=reply_rules_loader,
+        gemini_client=gemini_client,
+        conversation_session=session,
+    )
+
+    call_args = gemini_client.generate_reply.call_args
+    system_prompt_used = call_args.kwargs.get("system_prompt") or call_args.args[0]
+    assert "Дополнительные указания для этого сообщения:" not in system_prompt_used
+    assert "@AntEx_support" not in system_prompt_used
+
+
+async def test_reply_rule_hint_included_when_history_is_empty():
+    """Проверяет, что правило добавляется когда история сессии пуста."""
+    whitelist = WhitelistFilter(user_ids={123})
+
+    history = SimpleNamespace(
+        get_session_history=AsyncMock(return_value=[]),
+        save_message=AsyncMock(),
+    )
+    prompt_loader = SimpleNamespace(
+        load=AsyncMock(side_effect=["Системный промт", "Промт ответа"])
+    )
+    reply_rules_loader = SimpleNamespace(
+        find_matches=Mock(
+            return_value=[
+                ReplyRule(
+                    name="Обмен валюты",
+                    triggers=("обмен",),
+                    instruction="Упомяни @AntEx_support.",
+                    one_time_markers=("@antex_support",),
+                )
+            ]
+        )
+    )
+    gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ бота"))
+    event = SimpleNamespace(sender_id=123, raw_text="Где менять доллары?", respond=AsyncMock())
+    session = SimpleNamespace(is_active=lambda: True, remaining_minutes=lambda: 6)
+
+    await handle_new_message(
+        event=event,
+        whitelist=whitelist,
+        history=history,
+        prompt_loader=prompt_loader,
+        reply_rules_loader=reply_rules_loader,
+        gemini_client=gemini_client,
+        conversation_session=session,
+    )
+
+    call_args = gemini_client.generate_reply.call_args
+    system_prompt_used = call_args.kwargs.get("system_prompt") or call_args.args[0]
+    assert "Дополнительные указания для этого сообщения:" in system_prompt_used
+    assert "@AntEx_support" in system_prompt_used
+
+
+async def test_save_message_called_with_chat_id():
+    """Проверяет, что save_message вызывается с chat_id из события."""
+    whitelist = WhitelistFilter(user_ids={123})
+
+    history = SimpleNamespace(
+        get_session_history=AsyncMock(return_value=[]),
+        save_message=AsyncMock(),
+    )
+    prompt_loader = SimpleNamespace(
+        load=AsyncMock(side_effect=["Системный промт", "Промт ответа"])
+    )
+    gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ"))
+    event = SimpleNamespace(sender_id=123, chat_id=-100555000111, raw_text="Привет", respond=AsyncMock())
+    session = SimpleNamespace(is_active=lambda: True, remaining_minutes=lambda: 6)
+
+    await handle_new_message(
+        event=event,
+        whitelist=whitelist,
+        history=history,
+        prompt_loader=prompt_loader,
+        gemini_client=gemini_client,
+        group_chat_id=-100555000111,
+        conversation_session=session,
+    )
+
+    assert history.save_message.await_count == 2
+    call_kwargs_list = [call.kwargs for call in history.save_message.await_args_list]
+    for kwargs in call_kwargs_list:
+        assert kwargs.get("chat_id") == -100555000111
 
 
 async def test_send_response_uses_delay_between_30_and_60_seconds(monkeypatch):

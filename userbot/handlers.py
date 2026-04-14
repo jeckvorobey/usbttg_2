@@ -153,16 +153,18 @@ async def handle_new_message(
         )
         return
 
-    history_items = await history.get_history(sender_id)
+    session_start = None
+    if conversation_session is not None:
+        session_start = getattr(conversation_session, "_start_time", None)
+    history_items = await history.get_session_history(chat_id, session_start)
     logger.info(
-        "История для user_id=%s в chat_id=%s загружена: %s сообщений",
-        sender_id,
+        "История для chat_id=%s загружена: %s сообщений",
         chat_id,
         len(history_items),
     )
     system_prompt = await prompt_loader.load("system")
     reply_prompt = await prompt_loader.load("reply")
-    reply_rules_hint = _build_reply_rules_hint(user_message, reply_rules_loader)
+    reply_rules_hint = _build_reply_rules_hint(user_message, reply_rules_loader, history_items)
     wind_down_hint = ""
     if conversation_session is not None and session_is_active:
         remaining = conversation_session.remaining_minutes()
@@ -213,8 +215,8 @@ async def handle_new_message(
     if not response_sent:
         return
 
-    await history.save_message(sender_id, "user", user_message)
-    await history.save_message(sender_id, "assistant", reply_text)
+    await history.save_message(sender_id, "user", user_message, chat_id=chat_id)
+    await history.save_message(sender_id, "assistant", reply_text, chat_id=chat_id)
     logger.info("История диалога для user_id=%s в chat_id=%s сохранена", sender_id, chat_id)
     logger.info("Ответ пользователю user_id=%s в chat_id=%s отправлен", sender_id, chat_id)
 
@@ -262,8 +264,12 @@ def _extract_chat_id(event: object) -> int | None:
 def _build_reply_rules_hint(
     user_message: str,
     reply_rules_loader: ReplyRulesLoader | None,
+    history: list[dict[str, Any]] | None = None,
 ) -> str:
-    """Формирует служебную подсказку по сработавшим правилам ответа."""
+    """Формирует служебную подсказку по сработавшим правилам ответа.
+
+    Правила с one_time_markers подавляются, если маркер уже встречается в истории сессии.
+    """
     if reply_rules_loader is None:
         return ""
 
@@ -271,10 +277,18 @@ def _build_reply_rules_hint(
     if not matched_rules:
         return ""
 
-    lines = ["Дополнительные указания для этого сообщения:"]
+    history_text = " ".join(item.get("text", "") for item in (history or [])).casefold()
+
+    instructions = []
     for rule in matched_rules:
-        lines.append(f"- {rule.instruction}")
-    return "\n".join(lines)
+        if rule.one_time_markers and any(m in history_text for m in rule.one_time_markers):
+            continue
+        instructions.append(f"- {rule.instruction}")
+
+    if not instructions:
+        return ""
+
+    return "Дополнительные указания для этого сообщения:\n" + "\n".join(instructions)
 
 
 async def _send_response(

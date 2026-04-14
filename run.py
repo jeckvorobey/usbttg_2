@@ -231,6 +231,7 @@ async def main() -> None:
         max_retries=settings.gemini_max_retries,
         retry_backoff_seconds=settings.gemini_retry_backoff_seconds,
         retry_jitter_seconds=settings.gemini_retry_jitter_seconds,
+        request_timeout_seconds=settings.gemini_request_timeout_seconds,
     )
 
     topic_selector = TopicSelector(settings.topics_path)
@@ -276,12 +277,21 @@ async def main() -> None:
             conversation_session.is_active()
 
         async def _silence_check_job() -> None:
-            """Инициирует разговор после тишины — запускается каждые 10 минут."""
+            """Инициирует разговор после тишины — запускается каждые 5 минут."""
+            logger.info(
+                "Запуск проверки тишины: session_active=%s, silence_timeout_minutes=%s, group_chat_id=%s, group_target=%s",
+                conversation_session.is_active(),
+                settings.silence_timeout_minutes,
+                settings.group_chat_id,
+                settings.group_target,
+            )
             if conversation_session.is_active():
+                logger.info("Проверка тишины завершена без старта темы: активная сессия уже запущена")
                 return
             if is_dnd_active_utc(settings.dnd_hours_utc, _utc_now()):
                 logger.info("Проверка тишины пропущена: активен режим не беспокоить")
                 return
+            logger.info("Проверка тишины: синхронизация последней активности группы")
             await _sync_group_activity(
                 telegram_client,
                 settings.group_chat_id,
@@ -289,12 +299,15 @@ async def main() -> None:
                 silence_watcher,
             )
             if not silence_watcher.is_silence_exceeded(settings.silence_timeout_minutes):
+                logger.info("Проверка тишины завершена без старта темы: порог тишины ещё не достигнут")
                 return
             if settings.group_chat_id is None and not settings.group_target:
                 logger.warning("Невозможно начать разговор: GROUP_CHAT_ID и GROUP_TARGET не заданы в настройках")
                 return
             if telegram_client is None:
+                logger.warning("Невозможно начать разговор: Telegram-клиент отсутствует")
                 return
+            logger.info("Проверка тишины: резолв целевой группы для автозапуска темы")
             resolved_group_target = await _resolve_group_target(
                 telegram_client,
                 settings.group_chat_id,
@@ -310,19 +323,38 @@ async def main() -> None:
                 topic = await topic_selector.pick_random()
                 system_prompt = await prompt_loader.load("system")
                 start_topic_prompt = await prompt_loader.load("start_topic")
-                message = await gemini_client.start_topic(
-                    system_prompt=f"{system_prompt}\n\n{start_topic_prompt}",
-                    topic=topic,
+                logger.info("Проверка тишины: запуск Gemini для автозапуска темы '%s'", topic)
+                message = await asyncio.wait_for(
+                    gemini_client.start_topic(
+                        system_prompt=f"{system_prompt}\n\n{start_topic_prompt}",
+                        topic=topic,
+                    ),
+                    timeout=settings.gemini_request_timeout_seconds,
                 )
+                logger.info("Проверка тишины: отправка стартового сообщения в Telegram")
                 await telegram_client.send_message(resolved_group_target, message)
                 conversation_session.start(topic)
                 silence_watcher.update_last_activity()
                 logger.info("Разговор на тему '%s' инициирован после тишины", topic)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Таймаут при инициации разговора по расписанию: Gemini не ответил за %.1f сек",
+                    settings.gemini_request_timeout_seconds,
+                )
+            except asyncio.CancelledError:
+                logger.info("Проверка тишины отменена штатной остановкой приложения")
+                raise
             except Exception:
                 logger.exception("Ошибка при инициации разговора по расписанию")
 
         scheduler.add_job(_session_expiry_job, "interval", minutes=1)
-        scheduler.add_job(_silence_check_job, "interval", minutes=SILENCE_CHECK_INTERVAL_MINUTES)
+        scheduler.add_job(
+            _silence_check_job,
+            "interval",
+            minutes=SILENCE_CHECK_INTERVAL_MINUTES,
+            max_instances=1,
+            coalesce=True,
+        )
         logger.info(
             "Планировщик активен: проверка тишины каждые %s мин, порог тишины %s мин, сессия до %s мин",
             SILENCE_CHECK_INTERVAL_MINUTES,
@@ -339,7 +371,10 @@ async def main() -> None:
         await _register_handlers(userbot_client, whitelist)
         if telegram_client is not None:
             logger.info("Переход в режим ожидания сообщений Telegram")
-            await telegram_client.run_until_disconnected()
+            try:
+                await telegram_client.run_until_disconnected()
+            except asyncio.CancelledError:
+                logger.info("Ожидание сообщений Telegram прервано штатной остановкой приложения")
         else:
             logger.warning("Запуск ожидания сообщений пропущен: Telegram-клиент отсутствует")
     finally:
