@@ -113,6 +113,19 @@ async def test_start_topic_prompt_avoids_editorial_post_format():
 
 
 @pytest.mark.asyncio
+async def test_start_topic_prompt_requires_question_without_ready_made_advice():
+    """Проверяет, что автозапуск темы требует только нейтральный вопрос без готового ответа."""
+    loader = PromptLoader(prompts_dir="ai/prompts")
+
+    start_topic_prompt = await loader.load("start_topic")
+
+    assert "Только один короткий вопрос" in start_topic_prompt
+    assert "Не пиши готовый ответ" in start_topic_prompt
+    assert "Не давай совет" in start_topic_prompt
+    assert "Не используй категоричные формулировки" in start_topic_prompt
+
+
+@pytest.mark.asyncio
 async def test_prompts_describe_questions_more_precisely():
     """Проверяет, что промты разрешают уместный вопрос, но запрещают формальный подвешенный вопрос."""
     loader = PromptLoader(prompts_dir="ai/prompts")
