@@ -75,7 +75,7 @@ async def test_run_main_logs_startup_and_shutdown(monkeypatch, caplog):
         session_string="session-string",
         db_path=":memory:",
         whitelist_user_ids="123456789",
-        topics_path="data/topics.md",
+        topics_path="ai/prompts/topics.md",
         prompts_dir="ai/prompts",
         proxy_url=None,
         log_level="INFO",

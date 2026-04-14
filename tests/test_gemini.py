@@ -158,7 +158,7 @@ async def test_system_and_reply_prompts_require_non_intrusive_service_mentions()
 
 def test_topics_file_contains_only_nha_trang_focused_topics():
     """Проверяет, что production-темы не уводят разговор в другие города."""
-    topics = Path("data/topics.md").read_text(encoding="utf-8")
+    topics = Path("ai/prompts/topics.md").read_text(encoding="utf-8")
 
     assert "Нячанг" in topics
     assert "Дананг" not in topics
