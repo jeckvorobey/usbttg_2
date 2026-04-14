@@ -60,7 +60,7 @@ async def test_reply_rules_loader_returns_empty_list_for_empty_file():
 @pytest.mark.asyncio
 async def test_reply_rules_loader_matches_exchange_keywords():
     """Проверяет матчинг правил по словам из сообщения."""
-    loader = ReplyRulesLoader("data/reply_rules.md")
+    loader = ReplyRulesLoader("ai/prompts/reply_rules.md")
     await loader.load()
 
     matched = loader.find_matches("Где в Дананге лучше менять доллары и какой курс?")

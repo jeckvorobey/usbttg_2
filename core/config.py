@@ -73,8 +73,8 @@ class Settings(BaseSettings):
 
     # Пути к файлам данных
     db_path: str = "data/history.db"
-    topics_path: str = "data/topics.md"
-    reply_rules_path: str = "data/reply_rules.md"
+    topics_path: str = "ai/prompts/topics.md"
+    reply_rules_path: str = "ai/prompts/reply_rules.md"
     prompts_dir: str = "ai/prompts"
 
     # Whitelist разрешённых Telegram user_id через запятую
