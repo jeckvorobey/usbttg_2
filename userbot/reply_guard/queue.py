@@ -18,6 +18,7 @@ class ReplyGuardJob:
     user_id: int
     user_msg_id: int
     text: str
+    reply_context: str | None
     status: str
     attempts: int
     created_at: str
@@ -46,6 +47,7 @@ class ReplyGuardQueue:
                   user_id       INTEGER NOT NULL,
                   user_msg_id   INTEGER NOT NULL,
                   text          TEXT    NOT NULL,
+                  reply_context TEXT,
                   status        TEXT    NOT NULL,
                   attempts      INTEGER NOT NULL DEFAULT 0,
                   created_at    TEXT    NOT NULL,
@@ -62,11 +64,19 @@ class ReplyGuardQueue:
             )
             await db.commit()
             await _ensure_column(db, "reply_guard_jobs", "next_attempt_at", "TEXT")
+            await _ensure_column(db, "reply_guard_jobs", "reply_context", "TEXT")
             await db.commit()
         finally:
             await db.close()
 
-    async def enqueue(self, chat_id: int, user_id: int, user_msg_id: int, text: str) -> int | None:
+    async def enqueue(
+        self,
+        chat_id: int,
+        user_id: int,
+        user_msg_id: int,
+        text: str,
+        reply_context: str | None = None,
+    ) -> int | None:
         """Добавляет задачу, возвращая id или None при дубле."""
         now = _utc_iso()
         db = await aiosqlite.connect(self.db_path)
@@ -74,10 +84,10 @@ class ReplyGuardQueue:
             cursor = await db.execute(
                 """
                 INSERT OR IGNORE INTO reply_guard_jobs
-                    (chat_id, user_id, user_msg_id, text, status, attempts, created_at, updated_at)
-                VALUES (?, ?, ?, ?, 'pending', 0, ?, ?)
+                    (chat_id, user_id, user_msg_id, text, reply_context, status, attempts, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?)
                 """,
-                (chat_id, user_id, user_msg_id, text, now, now),
+                (chat_id, user_id, user_msg_id, text, reply_context, now, now),
             )
             await db.commit()
             if cursor.rowcount == 0:
@@ -181,6 +191,7 @@ def _row_to_job(row: aiosqlite.Row) -> ReplyGuardJob:
         user_id=int(row["user_id"]),
         user_msg_id=int(row["user_msg_id"]),
         text=str(row["text"]),
+        reply_context=row["reply_context"],
         status=str(row["status"]),
         attempts=int(row["attempts"]),
         created_at=str(row["created_at"]),

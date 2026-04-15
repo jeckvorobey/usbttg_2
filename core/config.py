@@ -201,7 +201,7 @@ class ReplyGuardConfig(_StrictModel):
 
     enabled: bool = False
     city: str = "Нячанг"
-    refusal_text: str = "Вопрос не по теме, переформулируйте вопрос"
+    refusal_text: str = "Кажется, это чуть не по теме. Уточните, пожалуйста, вопрос про Нячанг."
     classifier_model: str = "gemini-3-flash-preview"
     classifier_temperature: float = Field(default=0.1, ge=0.0, le=2.0)
     max_input_chars: int = Field(default=500, ge=1)

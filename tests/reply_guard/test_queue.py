@@ -20,6 +20,25 @@ async def test_queue_enqueue_and_claim_fifo(tmp_path):
     assert second.id == second_id
 
 
+async def test_queue_stores_reply_context(tmp_path):
+    """Проверяет сохранение контекста сообщения бота для follow-up вопросов."""
+    queue = ReplyGuardQueue(str(tmp_path / "reply_guard.db"))
+    await queue.init_db()
+
+    await queue.enqueue(
+        chat_id=1,
+        user_id=10,
+        user_msg_id=100,
+        text="Какую бы посоветовал?",
+        reply_context="В прокате бывают Vision и AirBlade.",
+    )
+
+    job = await queue.claim_next()
+
+    assert job is not None
+    assert job.reply_context == "В прокате бывают Vision и AirBlade."
+
+
 async def test_queue_ignores_duplicate_user_message(tmp_path):
     """Проверяет идемпотентность enqueue для одного Telegram-сообщения."""
     queue = ReplyGuardQueue(str(tmp_path / "reply_guard.db"))

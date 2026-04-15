@@ -99,7 +99,7 @@ enabled = false
 city = "Нячанг"
 
 # Фиксированный отказ для off-topic и prompt-injection.
-refusal_text = "Вопрос не по теме, переформулируйте вопрос"
+refusal_text = "Кажется, это чуть не по теме. Уточните, пожалуйста, вопрос про Нячанг."
 
 # Модель и температура для строгого классификатора on_topic/off_topic/injection.
 classifier_model = "gemini-3-flash-preview"

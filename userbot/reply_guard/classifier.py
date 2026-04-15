@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from html import escape
 from pathlib import Path
 from typing import Literal
 
@@ -29,13 +30,13 @@ class ReplyGuardClassifier:
         self.prompt_name = prompt_name
         self.prompt_path = prompt_path
 
-    async def classify(self, text: str) -> ReplyGuardVerdict:
+    async def classify(self, text: str, reply_context: str | None = None) -> ReplyGuardVerdict:
         """Возвращает on_topic, off_topic или injection."""
         prompt = await self._load_prompt()
         raw_verdict = await self.gemini_client.generate_reply(
             system_prompt=prompt,
             history=[],
-            user_message=f"<user_question>{text}</user_question>",
+            user_message=build_guard_input(text, reply_context),
         )
         verdict = raw_verdict.strip().lower()
         if verdict in VALID_VERDICTS:
@@ -50,3 +51,15 @@ class ReplyGuardClassifier:
         if self.prompt_path:
             return Path(self.prompt_path).read_text(encoding="utf-8")
         return await self.prompt_loader.load(self.prompt_name)
+
+
+def build_guard_input(text: str, reply_context: str | None = None) -> str:
+    """Формирует изолированный XML-like input для reply_guard."""
+    safe_text = escape(text, quote=False)
+    if reply_context:
+        safe_context = escape(reply_context, quote=False)
+        return (
+            f"<bot_message>{safe_context}</bot_message>\n"
+            f"<user_question>{safe_text}</user_question>"
+        )
+    return f"<user_question>{safe_text}</user_question>"

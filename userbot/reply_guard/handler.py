@@ -65,6 +65,7 @@ def build_reply_guard_handler(
             user_id=sender_id,
             user_msg_id=user_msg_id,
             text=text,
+            reply_context=_extract_message_text(reply_message),
         )
         setattr(event, "_reply_guard_consumed", True)
         if job_id is None:

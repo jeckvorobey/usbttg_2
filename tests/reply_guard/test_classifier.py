@@ -18,6 +18,22 @@ async def test_classifier_returns_valid_verdict():
     assert await classifier.classify("Где в Нячанге поесть фо?") == "on_topic"
 
 
+async def test_classifier_passes_reply_context_as_isolated_input():
+    """Проверяет передачу контекста reply без смешивания с инструкциями."""
+    loader = SimpleNamespace(load=AsyncMock(return_value="Промт классификатора"))
+    gemini = SimpleNamespace(generate_reply=AsyncMock(return_value="on_topic"))
+    classifier = ReplyGuardClassifier(loader, gemini)
+
+    assert await classifier.classify(
+        "Какую бы посоветовал?",
+        reply_context="Vision < AirBlade",
+    ) == "on_topic"
+
+    user_message = gemini.generate_reply.await_args.kwargs["user_message"]
+    assert "<bot_message>Vision &lt; AirBlade</bot_message>" in user_message
+    assert "<user_question>Какую бы посоветовал?</user_question>" in user_message
+
+
 async def test_classifier_treats_invalid_output_as_injection():
     """Проверяет безопасный fallback при мусорном ответе LLM."""
     loader = SimpleNamespace(load=AsyncMock(return_value="Промт классификатора"))

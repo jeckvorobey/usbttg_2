@@ -42,7 +42,7 @@ async def test_handler_enqueues_reply_to_bot_without_whitelist():
     """Проверяет, что reply на бота ставится в очередь без whitelist-проверки."""
     queue = SimpleNamespace(enqueue=AsyncMock(return_value=5))
     handler = build_reply_guard_handler(queue=queue, bot_user_id=777)
-    reply_message = SimpleNamespace(sender_id=777)
+    reply_message = SimpleNamespace(sender_id=777, text="Возьмите свежий байк в Европейском квартале.")
     event = SimpleNamespace(
         is_reply=True,
         sender_id=999,
@@ -59,6 +59,7 @@ async def test_handler_enqueues_reply_to_bot_without_whitelist():
         user_id=999,
         user_msg_id=42,
         text="Где в Нячанге аптека?",
+        reply_context="Возьмите свежий байк в Европейском квартале.",
     )
     assert event._reply_guard_consumed is True
 

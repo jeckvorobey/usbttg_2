@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from ai.gemini import GeminiGenerationError, GeminiTemporaryError, PromptLoader
-from userbot.reply_guard.classifier import ReplyGuardClassifier
+from userbot.reply_guard.classifier import ReplyGuardClassifier, build_guard_input
 from userbot.reply_guard.queue import ReplyGuardJob, ReplyGuardQueue
 from userbot.reply_guard.safety import post_filter, regex_prefilter, sanitize
 
@@ -78,7 +78,8 @@ class ReplyGuardWorker:
                 await self.queue.complete(job.id, "refused_injection_regex", verdict="injection")
                 return
 
-            verdict = await self.classifier.classify(text)
+            reply_context = sanitize(job.reply_context or "", max_chars=self.max_input_chars)
+            verdict = await self.classifier.classify(text, reply_context=reply_context or None)
             if verdict != "on_topic":
                 logger.warning("reply_guard worker: refusal reason=%s job_id=%s", verdict, job.id)
                 await self._send_refusal(job)
@@ -89,7 +90,7 @@ class ReplyGuardWorker:
             answer = await self.gemini_client.generate_reply(
                 system_prompt=system_prompt,
                 history=[],
-                user_message=f"<user_question>{text}</user_question>",
+                user_message=build_guard_input(text, reply_context or None),
             )
             post_match = post_filter(answer)
             if post_match is not None:
