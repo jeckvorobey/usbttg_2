@@ -180,10 +180,10 @@ class WindowedQAConfig(_StrictModel):
     @field_validator("morning_window_utc", "evening_window_utc", mode="before")
     @classmethod
     def validate_hour_window(cls, value: object) -> object:
-        """Проверяет пару часов UTC: start включительно, end исключительно."""
+        """Проверяет пару часов UTC, включая окна через полночь."""
         start, end = _read_pair(value, "Окно UTC")
-        if not (0 <= start < end <= 24):
-            raise ValueError("Окно UTC должно удовлетворять 0 <= start < end <= 24")
+        if not (0 <= start <= 23 and 0 <= end <= 24 and start != end):
+            raise ValueError("Окно UTC должно удовлетворять 0 <= start <= 23, 0 <= end <= 24 и start != end")
         return (start, end)
 
     @field_validator("initiator_offset_minutes", "responder_delay_minutes", mode="before")

@@ -134,7 +134,7 @@ def test_settings_with_secret_overrides_ignores_local_toml_without_settings_path
 
 @pytest.mark.parametrize(
     "window_value",
-    ["[10, 10]", "[-1, 10]", "[10, 25]", "[18, 16]"],
+    ["[10, 10]", "[-1, 10]", "[10, 25]"],
 )
 def test_settings_rejects_invalid_window_ranges(tmp_path, window_value: str):
     """Проверяет валидацию некорректных UTC-окон."""
@@ -148,6 +148,36 @@ def test_settings_rejects_invalid_window_ranges(tmp_path, window_value: str):
 
     with pytest.raises(Exception):
         Settings(**BASE_SECRETS, settings_path=str(settings_path))
+
+
+def test_settings_accepts_midnight_crossing_window(tmp_path):
+    """Проверяет поддержку UTC-окна, которое пересекает полночь."""
+    settings_path = write_settings(
+        tmp_path,
+        """
+        [windowed_qa]
+        evening_window_utc = [23, 3]
+        """,
+    )
+
+    settings = Settings(**BASE_SECRETS, settings_path=str(settings_path))
+
+    assert settings.window_evening_utc == (23, 3)
+
+
+def test_settings_accepts_24_as_window_end(tmp_path):
+    """Проверяет поддержку 24 как конца UTC-суток."""
+    settings_path = write_settings(
+        tmp_path,
+        """
+        [windowed_qa]
+        evening_window_utc = [23, 24]
+        """,
+    )
+
+    settings = Settings(**BASE_SECRETS, settings_path=str(settings_path))
+
+    assert settings.window_evening_utc == (23, 24)
 
 
 @pytest.mark.parametrize("value", ["[-1, 5]", "[5, 4]"])

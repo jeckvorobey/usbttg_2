@@ -56,11 +56,26 @@ class WindowSchedule:
         """Возвращает активное UTC-окно или None."""
         now = _ensure_utc(now_utc or datetime.now(UTC))
         for name, (start_hour, end_hour) in self.windows:
-            start = now.replace(hour=start_hour, minute=0, second=0, microsecond=0)
-            end = now.replace(hour=end_hour, minute=0, second=0, microsecond=0)
+            start, end = self._window_bounds(now, start_hour, end_hour)
             if start <= now < end:
                 return ActiveWindow(name=name, start=start, end=end)
         return None
+
+    @staticmethod
+    def _window_bounds(now: datetime, start_hour: int, end_hour: int) -> tuple[datetime, datetime]:
+        """Строит границы окна, поддерживая переход через полночь."""
+        start = now.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+        if end_hour == 24:
+            end = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        else:
+            end = now.replace(hour=end_hour, minute=0, second=0, microsecond=0)
+        if start_hour < end_hour:
+            return start, end
+        if now.hour < end_hour:
+            start -= timedelta(days=1)
+        else:
+            end += timedelta(days=1)
+        return start, end
 
     def should_fire_initiator(self, window: ActiveWindow, now_utc: datetime | None = None) -> bool:
         """Проверяет, наступил ли выбранный offset внутри активного окна."""

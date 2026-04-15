@@ -15,6 +15,11 @@ def dt(hour: int, minute: int = 0) -> datetime:
     return datetime(2026, 4, 15, hour, minute, tzinfo=UTC)
 
 
+def dt_day(day: int, hour: int, minute: int = 0) -> datetime:
+    """Создаёт UTC datetime для выбранного дня фиксированного месяца."""
+    return datetime(2026, 4, day, hour, minute, tzinfo=UTC)
+
+
 @pytest.mark.parametrize(
     ("moment", "expected"),
     [
@@ -35,6 +40,46 @@ def test_window_schedule_current_window_boundaries(moment: datetime, expected: s
     window = schedule.current_window_utc(moment)
 
     assert (window.name if window else None) == expected
+
+
+@pytest.mark.parametrize(
+    ("moment", "expected_start", "expected_end"),
+    [
+        (dt_day(15, 22, 59), None, None),
+        (dt_day(15, 23, 0), dt_day(15, 23), dt_day(16, 3)),
+        (dt_day(16, 2, 59), dt_day(15, 23), dt_day(16, 3)),
+        (dt_day(16, 3, 0), None, None),
+    ],
+)
+def test_window_schedule_supports_midnight_crossing_window(
+    moment: datetime,
+    expected_start: datetime | None,
+    expected_end: datetime | None,
+):
+    """Проверяет UTC-окно, которое пересекает полночь."""
+    schedule = WindowSchedule(morning_window_utc=(10, 11), evening_window_utc=(23, 3))
+
+    window = schedule.current_window_utc(moment)
+
+    if expected_start is None:
+        assert window is None
+    else:
+        assert window is not None
+        assert window.name == "evening"
+        assert window.start == expected_start
+        assert window.end == expected_end
+
+
+def test_window_schedule_supports_24_as_end_of_day():
+    """Проверяет значение 24 как конец UTC-суток."""
+    schedule = WindowSchedule(morning_window_utc=(10, 11), evening_window_utc=(23, 24))
+
+    window = schedule.current_window_utc(dt_day(15, 23, 30))
+
+    assert window is not None
+    assert window.name == "evening"
+    assert window.start == dt_day(15, 23)
+    assert window.end == dt_day(16, 0)
 
 
 def test_exchange_tracker_allows_one_exchange_per_window_and_resets_next_window():
