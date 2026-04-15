@@ -133,6 +133,34 @@ def test_settings_reads_proxy_url():
         assert s.proxy_url == "http://user:pass@127.0.0.1:8080"
 
 
+def test_settings_reads_group_target_from_env():
+    """Проверяет загрузку целевой Telegram-группы из переменных окружения."""
+    env = {
+        **BASE_ENV,
+        "GROUP_CHAT_ID": "-1001234567890",
+        "GROUP_TARGET": "https://t.me/example_group",
+    }
+    with patch.dict(os.environ, env, clear=True):
+        from core.config import Settings
+
+        s = Settings(_env_file=None)
+
+    assert s.group_chat_id == -1001234567890
+    assert s.group_target == "https://t.me/example_group"
+
+
+def test_settings_normalizes_empty_group_target_env():
+    """Проверяет, что пустая строковая Telegram-цель отключается."""
+    env = {**BASE_ENV, "GROUP_CHAT_ID": "0", "GROUP_TARGET": "   "}
+    with patch.dict(os.environ, env, clear=True):
+        from core.config import Settings
+
+        s = Settings(_env_file=None)
+
+    assert s.group_chat_id is None
+    assert s.group_target is None
+
+
 def test_settings_proxy_url_defaults_to_none():
     """Проверяет, что proxy URL по умолчанию отключён."""
     with patch.dict(os.environ, BASE_ENV, clear=True):

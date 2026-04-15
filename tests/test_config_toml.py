@@ -13,6 +13,8 @@ BASE_SECRETS = {
     "api_hash": "test_api_hash_abc",
     "gemini_api_key": "test_gemini_key_xyz",
     "session_string": "test-session-string",
+    "group_chat_id": -100123,
+    "group_target": "@group",
 }
 
 
@@ -50,8 +52,6 @@ def test_settings_loads_non_secret_values_from_toml(tmp_path):
         request_timeout_seconds = 12.5
 
         [telegram]
-        group_chat_id = -100123
-        group_target = "@group"
         whitelist_user_ids = [111, 222]
 
         [logging]
@@ -216,6 +216,21 @@ def test_settings_path_can_come_from_env(tmp_path):
         settings = Settings(_env_file=None)
 
     assert settings.mode == "windowed_qa"
+
+
+def test_settings_rejects_group_target_in_toml(tmp_path):
+    """Проверяет, что Telegram-цель больше не читается из TOML."""
+    settings_path = write_settings(
+        tmp_path,
+        """
+        [telegram]
+        group_chat_id = -100123
+        group_target = "@group"
+        """,
+    )
+
+    with pytest.raises(Exception):
+        Settings(**BASE_SECRETS, settings_path=str(settings_path))
 
 
 def test_settings_rejects_missing_explicit_settings_path(tmp_path):

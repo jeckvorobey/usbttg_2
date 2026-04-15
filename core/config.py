@@ -45,7 +45,15 @@ def _normalize_optional_str(v: object) -> object:
     return v
 
 
-OptionalInt = Annotated[int | None, BeforeValidator(_empty_str_to_none)]
+def _normalize_optional_chat_id(v: object) -> object:
+    """Считает 0 и пустую строку отсутствующим chat_id."""
+    v = _empty_str_to_none(v)
+    if v == 0 or v == "0":
+        return None
+    return v
+
+
+OptionalChatId = Annotated[int | None, BeforeValidator(_normalize_optional_chat_id)]
 OptionalStr = Annotated[str | None, BeforeValidator(_normalize_optional_str)]
 RequiredStr = Annotated[str, BeforeValidator(_require_non_empty_str)]
 HourWindow = tuple[int, int]
@@ -66,6 +74,8 @@ class Secrets(BaseSettings):
     gemini_api_key: str
     session_string: RequiredStr
     proxy_url: OptionalStr = None
+    group_chat_id: OptionalChatId = None
+    group_target: OptionalStr = None
     settings_path: str = "settings.toml"
 
 
@@ -109,20 +119,9 @@ class GeminiConfig(_StrictModel):
 
 
 class TelegramConfig(_StrictModel):
-    """Несекретные параметры Telegram-группы."""
+    """Несекретные параметры Telegram."""
 
-    group_chat_id: OptionalInt = None
-    group_target: OptionalStr = None
     whitelist_user_ids: list[int] = Field(default_factory=list)
-
-    @field_validator("group_chat_id", mode="before")
-    @classmethod
-    def normalize_group_chat_id(cls, value: object) -> object:
-        """Считает 0 и пустую строку отсутствующим chat_id."""
-        value = _empty_str_to_none(value)
-        if value == 0:
-            return None
-        return value
 
 
 class LoggingConfig(_StrictModel):
@@ -260,7 +259,15 @@ class Settings:
 
     def __init__(self, _env_file: str | None | object = ".env", **overrides: object) -> None:
         settings_path_override = overrides.pop("settings_path", _UNSET)
-        secret_keys = {"api_id", "api_hash", "gemini_api_key", "session_string", "proxy_url"}
+        secret_keys = {
+            "api_id",
+            "api_hash",
+            "gemini_api_key",
+            "session_string",
+            "proxy_url",
+            "group_chat_id",
+            "group_target",
+        }
         required_secret_keys = {"api_id", "api_hash", "gemini_api_key", "session_string"}
         secret_overrides = {key: overrides.pop(key) for key in list(overrides) if key in secret_keys}
 
@@ -275,9 +282,8 @@ class Settings:
                 settings_path = settings_path_override
                 settings_path_required = settings_path is not None
         else:
-            for key, value in secret_overrides.items():
-                setattr(self, key, value)
-            self.proxy_url = secret_overrides.get("proxy_url")
+            for key in secret_keys:
+                setattr(self, key, secret_overrides.get(key))
             if settings_path_override is _UNSET:
                 settings_path = os.environ.get("SETTINGS_PATH")
                 settings_path_required = settings_path is not None
@@ -312,8 +318,6 @@ class Settings:
         self.gemini_retry_jitter_seconds = config.gemini.retry_jitter_seconds
         self.gemini_request_timeout_seconds = config.gemini.request_timeout_seconds
 
-        self.group_chat_id = config.telegram.group_chat_id
-        self.group_target = config.telegram.group_target
         self.whitelist_user_ids = ",".join(str(user_id) for user_id in config.telegram.whitelist_user_ids)
 
         self.log_level = config.logging.level

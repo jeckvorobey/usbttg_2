@@ -1,6 +1,6 @@
 # settings.example.toml — моковый пример несекретной конфигурации
 # Скопируй в settings.toml и замени значения под конкретный инстанс.
-# Секреты API_ID, API_HASH, GEMINI_API_KEY и SESSION_STRING должны оставаться в .env.
+# Переменные инстанса и секреты лежат в .env.
 
 [mode]
 # Активный режим работы инстанса: legacy_session или windowed_qa.
@@ -46,12 +46,6 @@ retry_jitter_seconds = 0.3
 request_timeout_seconds = 45.0
 
 [telegram]
-# Моковый числовой ID Telegram-группы; 0 означает, что chat_id не задан.
-group_chat_id = -1001234567890
-
-# Моковая альтернативная цель Telegram-группы, например @username.
-group_target = "@mock_group"
-
 # Моковые Telegram user_id пользователей, которым бот имеет право отвечать.
 whitelist_user_ids = [111111111, 222222222]
 

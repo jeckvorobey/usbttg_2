@@ -106,7 +106,7 @@ uv run python run.py
 - Тип сервиса: worker/background service, без публичного порта.
 - Build Pack: Dockerfile.
 - Persistent Volume: примонтировать в `/data`.
-- Environment Variables: передать `API_ID`, `API_HASH`, `GEMINI_API_KEY`, `SESSION_STRING` и при необходимости `GROUP_CHAT_ID`, `GROUP_TARGET`, `PROXY_URL`, `WHITELIST_USER_IDS`.
+- Environment Variables: передать `API_ID`, `API_HASH`, `GEMINI_API_KEY`, `SESSION_STRING`, `SETTINGS_PATH` и при необходимости `GROUP_CHAT_ID`, `GROUP_TARGET`, `PROXY_URL`. Whitelist остаётся в `settings.toml`.
 
 Для автопоста по расписанию в каналы и супергруппы лучше задавать `GROUP_TARGET` (`@username` или `https://t.me/...`). Одного `GROUP_CHAT_ID=-100...` часто недостаточно: Telethon нужен резолвнутый `entity` с `access_hash`.
 
