@@ -196,6 +196,23 @@ class WindowedQAConfig(_StrictModel):
         return (start, end)
 
 
+class ReplyGuardConfig(_StrictModel):
+    """Параметры изолированного reply_guard."""
+
+    enabled: bool = False
+    city: str = "Нячанг"
+    refusal_text: str = "Вопрос не по теме, переформулируйте вопрос"
+    classifier_model: str = "gemini-3-flash-preview"
+    classifier_temperature: float = Field(default=0.1, ge=0.0, le=2.0)
+    max_input_chars: int = Field(default=500, ge=1)
+    queue_db_path: str = "data/reply_guard_queue.db"
+    worker_poll_interval_seconds: float = Field(default=0.5, gt=0.0)
+    max_attempts: int = Field(default=3, ge=1)
+    retry_backoff_seconds: list[float] = Field(default_factory=lambda: [2.0, 8.0, 30.0])
+    system_prompt_path: str = "ai/prompts/reply_guard/system.md"
+    classifier_prompt_path: str = "ai/prompts/reply_guard/classifier.md"
+
+
 class AppConfig(_StrictModel):
     """Полная несекретная TOML-конфигурация."""
 
@@ -207,6 +224,7 @@ class AppConfig(_StrictModel):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     legacy_session: LegacySessionConfig = Field(default_factory=LegacySessionConfig)
     windowed_qa: WindowedQAConfig = Field(default_factory=WindowedQAConfig)
+    reply_guard: ReplyGuardConfig = Field(default_factory=ReplyGuardConfig)
 
 
 def _read_pair(value: object, label: str) -> tuple[int, int]:
@@ -312,6 +330,19 @@ class Settings:
         self.initiator_offset_minutes = config.windowed_qa.initiator_offset_minutes
         self.responder_delay_minutes = config.windowed_qa.responder_delay_minutes
         self.max_exchanges_per_window = config.windowed_qa.max_exchanges_per_window
+
+        self.reply_guard_enabled = config.reply_guard.enabled
+        self.reply_guard_city = config.reply_guard.city
+        self.reply_guard_refusal_text = config.reply_guard.refusal_text
+        self.reply_guard_classifier_model = config.reply_guard.classifier_model
+        self.reply_guard_classifier_temperature = config.reply_guard.classifier_temperature
+        self.reply_guard_max_input_chars = config.reply_guard.max_input_chars
+        self.reply_guard_queue_db_path = config.reply_guard.queue_db_path
+        self.reply_guard_worker_poll_interval_seconds = config.reply_guard.worker_poll_interval_seconds
+        self.reply_guard_max_attempts = config.reply_guard.max_attempts
+        self.reply_guard_retry_backoff_seconds = config.reply_guard.retry_backoff_seconds
+        self.reply_guard_system_prompt_path = config.reply_guard.system_prompt_path
+        self.reply_guard_classifier_prompt_path = config.reply_guard.classifier_prompt_path
 
 
 @lru_cache(maxsize=1)

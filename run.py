@@ -14,6 +14,10 @@ from core.config import load_settings_or_exit
 from core.logging import setup_logging
 from userbot.client import UserBotClient
 from userbot.handlers import WhitelistFilter, handle_new_message
+from userbot.reply_guard.classifier import ReplyGuardClassifier
+from userbot.reply_guard.handler import build_reply_guard_handler
+from userbot.reply_guard.queue import ReplyGuardQueue
+from userbot.reply_guard.worker import ReplyGuardWorker
 from userbot.scheduler import ConversationSession, SilenceWatcher, TopicSelector, is_dnd_active_utc
 from userbot.windowed_qa import ExchangeTracker, WindowSchedule, build_responder_handler, initiator_job
 
@@ -270,6 +274,74 @@ async def main() -> None:
             settings.group_target,
         )
 
+    reply_guard_worker: ReplyGuardWorker | None = None
+    reply_guard_task: asyncio.Task[None] | None = None
+    if settings.reply_guard_enabled:
+        if telegram_client is None:
+            logger.warning("reply_guard: запуск пропущен — Telegram-клиент отсутствует")
+        else:
+            try:
+                from telethon import events
+            except ImportError:
+                logger.warning("reply_guard: handler не зарегистрирован — telethon не установлен")
+            else:
+                me = await telegram_client.get_me()
+                bot_user_id = getattr(me, "id", None)
+                if not isinstance(bot_user_id, int):
+                    logger.warning("reply_guard: handler не зарегистрирован — не удалось определить me.id")
+                else:
+                    reply_guard_chat_target = await _resolve_group_target(
+                        telegram_client,
+                        settings.group_chat_id,
+                        settings.group_target,
+                    )
+                    allowed_chat_ids = _iter_candidate_chat_ids(settings.group_chat_id) if settings.group_chat_id else set()
+                    event_chats_filter = reply_guard_chat_target or settings.group_chat_id or settings.group_target
+                    if event_chats_filter is None:
+                        logger.warning("reply_guard: handler не зарегистрирован — целевая группа не задана")
+                    else:
+                        reply_guard_queue = ReplyGuardQueue(settings.reply_guard_queue_db_path)
+                        await reply_guard_queue.init_db()
+                        classifier_gemini = GeminiClient(
+                            settings.gemini_api_key,
+                            model_name=settings.reply_guard_classifier_model,
+                            proxy_url=settings.proxy_url,
+                            fallback_model_name=settings.gemini_fallback_model,
+                            max_retries=settings.gemini_max_retries,
+                            retry_backoff_seconds=settings.gemini_retry_backoff_seconds,
+                            retry_jitter_seconds=settings.gemini_retry_jitter_seconds,
+                            request_timeout_seconds=settings.gemini_request_timeout_seconds,
+                            temperature=settings.reply_guard_classifier_temperature,
+                        )
+                        classifier = ReplyGuardClassifier(
+                            prompt_loader=prompt_loader,
+                            gemini_client=classifier_gemini,
+                            prompt_path=settings.reply_guard_classifier_prompt_path,
+                        )
+                        reply_guard_worker = ReplyGuardWorker(
+                            queue=reply_guard_queue,
+                            client=telegram_client,
+                            classifier=classifier,
+                            prompt_loader=prompt_loader,
+                            gemini_client=gemini_client,
+                            refusal_text=settings.reply_guard_refusal_text,
+                            poll_interval_seconds=settings.reply_guard_worker_poll_interval_seconds,
+                            max_input_chars=settings.reply_guard_max_input_chars,
+                            max_attempts=settings.reply_guard_max_attempts,
+                            retry_backoff_seconds=settings.reply_guard_retry_backoff_seconds,
+                            system_prompt_path=settings.reply_guard_system_prompt_path,
+                        )
+                        reply_guard_task = asyncio.create_task(reply_guard_worker.run())
+                        telegram_client.add_event_handler(
+                            build_reply_guard_handler(
+                                reply_guard_queue,
+                                bot_user_id,
+                                allowed_chat_ids=allowed_chat_ids,
+                            ),
+                            events.NewMessage(chats=event_chats_filter),
+                        )
+                        logger.info("reply_guard: handler и воркер зарегистрированы")
+
     scheduler = AsyncIOScheduler()
 
     if settings.mode == "legacy_session" and settings.scheduler_enabled:
@@ -431,6 +503,15 @@ async def main() -> None:
         else:
             logger.warning("Запуск ожидания сообщений пропущен: Telegram-клиент отсутствует")
     finally:
+        if reply_guard_worker is not None:
+            logger.info("Остановка reply_guard воркера")
+            reply_guard_worker.stop()
+        if reply_guard_task is not None:
+            reply_guard_task.cancel()
+            try:
+                await reply_guard_task
+            except asyncio.CancelledError:
+                logger.info("reply_guard воркер остановлен")
         shutdown = getattr(scheduler, "shutdown", None)
         if callable(shutdown):
             logger.info("Остановка планировщика")

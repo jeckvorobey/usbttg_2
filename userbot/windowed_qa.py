@@ -158,6 +158,9 @@ def build_responder_handler(
     effective_tracker = tracker or ExchangeTracker(getattr(settings, "max_exchanges_per_window", 1))
 
     async def on_new_message(event: object) -> None:
+        if getattr(event, "_reply_guard_consumed", False):
+            return
+
         sender_id = getattr(event, "sender_id", None)
         if not isinstance(sender_id, int):
             return

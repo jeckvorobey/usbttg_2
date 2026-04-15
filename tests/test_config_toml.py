@@ -70,6 +70,20 @@ def test_settings_loads_non_secret_values_from_toml(tmp_path):
         initiator_offset_minutes = [3, 5]
         responder_delay_minutes = [9, 11]
         max_exchanges_per_window = 1
+
+        [reply_guard]
+        enabled = true
+        city = "Нячанг"
+        refusal_text = "Отказ"
+        classifier_model = "gemini-classifier"
+        classifier_temperature = 0.1
+        max_input_chars = 400
+        queue_db_path = "custom/reply_guard.db"
+        worker_poll_interval_seconds = 0.2
+        max_attempts = 2
+        retry_backoff_seconds = [1, 3]
+        system_prompt_path = "custom/reply_guard/system.md"
+        classifier_prompt_path = "custom/reply_guard/classifier.md"
         """,
     )
 
@@ -96,6 +110,12 @@ def test_settings_loads_non_secret_values_from_toml(tmp_path):
     assert settings.window_evening_utc == (17, 19)
     assert settings.initiator_offset_minutes == (3, 5)
     assert settings.responder_delay_minutes == (9, 11)
+    assert settings.reply_guard_enabled is True
+    assert settings.reply_guard_refusal_text == "Отказ"
+    assert settings.reply_guard_classifier_model == "gemini-classifier"
+    assert settings.reply_guard_max_input_chars == 400
+    assert settings.reply_guard_queue_db_path == "custom/reply_guard.db"
+    assert settings.reply_guard_system_prompt_path == "custom/reply_guard/system.md"
 
 
 def test_settings_with_secret_overrides_ignores_local_toml_without_settings_path(tmp_path, monkeypatch):
