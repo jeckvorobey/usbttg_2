@@ -13,7 +13,10 @@ async def history():
     """Создаёт экземпляр истории с in-memory базой данных."""
     h = MessageHistory(db_path=":memory:")
     await h.init_db()
-    return h
+    try:
+        yield h
+    finally:
+        await h.close()
 
 
 async def test_save_and_get_message(history):
@@ -65,6 +68,19 @@ async def test_empty_history_returns_empty_list(history):
     """Проверяет, что запрос истории несуществующего пользователя возвращает пустой список."""
     messages = await history.get_history(user_id=99999)
     assert messages == []
+
+
+async def test_init_db_creates_parent_directory(tmp_path):
+    """Проверяет создание директории для файловой SQLite базы."""
+    db_path = tmp_path / "data" / "history.db"
+    history = MessageHistory(db_path=str(db_path))
+
+    try:
+        await history.init_db()
+
+        assert db_path.exists()
+    finally:
+        await history.close()
 
 
 async def test_get_session_history_returns_messages_for_chat(history):

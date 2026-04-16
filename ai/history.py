@@ -2,6 +2,7 @@
 
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import aiosqlite
@@ -180,9 +181,27 @@ class MessageHistory:
         )
         return messages
 
+    async def close(self) -> None:
+        """Закрывает открытое SQLite-соединение."""
+        if self._connection is None:
+            return
+
+        await self._connection.close()
+        self._connection = None
+
     async def _get_connection(self) -> aiosqlite.Connection:
         """Возвращает общее подключение к SQLite, необходимое для :memory:."""
         if self._connection is None:
+            self._ensure_parent_dir()
             logger.info("Открытие SQLite-соединения: %s", self.db_path)
             self._connection = await aiosqlite.connect(self.db_path)
         return self._connection
+
+    def _ensure_parent_dir(self) -> None:
+        """Создаёт директорию для файла БД, если это файловый путь."""
+        if self.db_path == ":memory:":
+            return
+
+        parent = Path(self.db_path).parent
+        if str(parent) and str(parent) != ".":
+            parent.mkdir(parents=True, exist_ok=True)
