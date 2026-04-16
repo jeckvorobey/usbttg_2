@@ -520,6 +520,10 @@ async def main() -> None:
                 await result
         logger.info("Остановка Telegram-клиента")
         await userbot_client.stop()
+        close_history = getattr(history, "close", None)
+        if callable(close_history):
+            logger.info("Закрытие хранилища истории сообщений")
+            await close_history()
         logger.info("Приложение остановлено")
 
 
