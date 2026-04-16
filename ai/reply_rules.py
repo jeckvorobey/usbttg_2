@@ -43,7 +43,7 @@ class ReplyRulesLoader:
             logger.error("Файл правил ответа не найден: %s", path)
             raise FileNotFoundError(path)
 
-        content = await asyncio.to_thread(path.read_text, encoding="utf-8")
+        content = path.read_text(encoding="utf-8")
         self.rules = self._parse_rules(content)
         logger.info("Правил ответа загружено: %s", len(self.rules))
 

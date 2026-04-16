@@ -1,6 +1,5 @@
 """Планировщик задач APScheduler и логика сессий разговора."""
 
-import asyncio
 import logging
 import random
 from datetime import UTC, datetime
@@ -58,7 +57,7 @@ class TopicSelector:
         """
         path = Path(self.topics_path)
         logger.info("Загрузка тем разговора из %s", path)
-        content = await asyncio.to_thread(path.read_text, encoding="utf-8")
+        content = path.read_text(encoding="utf-8")
         lines = [line.strip() for line in content.splitlines()]
 
         if "---" in lines:

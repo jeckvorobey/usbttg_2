@@ -191,7 +191,7 @@ async def test_main_initializes_components(monkeypatch):
     monkeypatch.setattr(
         run,
         "GeminiClient",
-        lambda api_key, model_name=None, proxy_url=None, fallback_model_name=None, max_retries=None, retry_backoff_seconds=None, retry_jitter_seconds=None, request_timeout_seconds=None: SimpleNamespace(
+        lambda api_key, model_name=None, proxy_url=None, fallback_model_name=None, max_retries=None, retry_backoff_seconds=None, retry_jitter_seconds=None, request_timeout_seconds=None, temperature=None: SimpleNamespace(
             api_key=api_key,
             model_name=model_name,
             proxy_url=proxy_url,
@@ -264,6 +264,7 @@ async def test_main_passes_gemini_resilience_settings(monkeypatch):
         retry_backoff_seconds=None,
         retry_jitter_seconds=None,
         request_timeout_seconds=None,
+        temperature=None,
     ):
         captured["api_key"] = api_key
         captured["model_name"] = model_name
@@ -273,6 +274,7 @@ async def test_main_passes_gemini_resilience_settings(monkeypatch):
         captured["retry_backoff_seconds"] = retry_backoff_seconds
         captured["retry_jitter_seconds"] = retry_jitter_seconds
         captured["request_timeout_seconds"] = request_timeout_seconds
+        captured["temperature"] = temperature
         return SimpleNamespace()
 
     monkeypatch.setattr(run, "GeminiClient", build_gemini_client)
@@ -293,6 +295,7 @@ async def test_main_passes_gemini_resilience_settings(monkeypatch):
         "retry_backoff_seconds": 2.0,
         "retry_jitter_seconds": 0.3,
         "request_timeout_seconds": 45.0,
+        "temperature": 0.9,
     }
 
 
@@ -305,8 +308,8 @@ def test_build_telegram_client_rejects_blank_session_string():
 
 
 @pytest.mark.asyncio
-async def test_main_schedules_silence_checks_every_five_minutes(monkeypatch):
-    """Проверяет, что проверка тишины запускается каждые 5 минут с явными ограничениями инстансов."""
+async def test_main_schedules_silence_checks_from_settings(monkeypatch):
+    """Проверяет, что интервал проверки тишины берётся из настроек."""
     import run
 
     settings = Settings(
@@ -319,6 +322,7 @@ async def test_main_schedules_silence_checks_every_five_minutes(monkeypatch):
         topics_path="ai/prompts/topics.md",
         prompts_dir="ai/prompts",
         scheduler_enabled=True,
+        silence_check_interval_minutes=7,
         silence_timeout_minutes=60,
     )
 
@@ -363,7 +367,7 @@ async def test_main_schedules_silence_checks_every_five_minutes(monkeypatch):
     assert session_job_args[1] == "interval"
     assert session_job_kwargs["minutes"] == 1
     assert silence_job_args[1] == "interval"
-    assert silence_job_kwargs["minutes"] == 5
+    assert silence_job_kwargs["minutes"] == 7
     assert silence_job_kwargs["max_instances"] == 1
     assert silence_job_kwargs["coalesce"] is True
 

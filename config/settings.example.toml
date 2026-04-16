@@ -1,0 +1,116 @@
+# settings.example.toml — моковый пример несекретной конфигурации
+# Скопируй в settings.toml и замени значения под конкретный инстанс.
+# Переменные инстанса и секреты лежат в .env.
+
+[mode]
+# Активный режим работы инстанса: legacy_session или windowed_qa.
+active = "windowed_qa"
+
+[bot]
+# Роль инстанса в режиме windowed_qa: initiator задаёт вопрос, responder отвечает peer-боту.
+role = "initiator"
+
+[paths]
+# Путь к SQLite-файлу с историей диалогов.
+db_path = "data/mock_history.db"
+
+# Путь к файлу тем для самостоятельного начала разговоров.
+topics_path = "ai/prompts/topics.md"
+
+# Путь к файлу правил, которые применяются при генерации ответов.
+reply_rules_path = "ai/prompts/reply_rules.md"
+
+# Директория с markdown-промтами Gemini.
+prompts_dir = "ai/prompts"
+
+[gemini]
+# Основная модель Gemini для генерации ответов.
+model = "gemini-3.1-pro-preview"
+
+# Резервная модель Gemini на случай временных ошибок основной модели.
+fallback_model = "gemini-3-flash-preview"
+
+# Температура генерации: выше значение — разнообразнее ответы, диапазон 0.0..2.0.
+temperature = 0.9
+
+# Максимальное число попыток запроса к Gemini при временных ошибках.
+max_retries = 3
+
+# Базовая задержка между повторными запросами к Gemini в секундах.
+retry_backoff_seconds = 1.0
+
+# Случайная добавка к задержке между повторными запросами в секундах.
+retry_jitter_seconds = 0.3
+
+# Таймаут одного запроса к Gemini в секундах.
+request_timeout_seconds = 45.0
+
+[telegram]
+# Моковые Telegram user_id пользователей, которым бот имеет право отвечать.
+whitelist_user_ids = [111111111, 222222222]
+
+[logging]
+# Уровень логирования приложения: DEBUG, INFO, WARNING, ERROR или CRITICAL.
+level = "INFO"
+
+[legacy_session]
+# Включает APScheduler для самостоятельного начала 30-минутных разговорных сессий.
+scheduler_enabled = true
+
+# Период проверки тишины в группе в минутах.
+silence_check_interval_minutes = 5
+
+# Сколько минут без сообщений считать тишиной перед возможной активностью бота.
+silence_timeout_minutes = 180
+
+# Длительность одной разговорной сессии в минутах.
+session_duration_minutes = 30
+
+# UTC-интервал режима "не беспокоить" в формате HH-HH; пустая строка отключает ограничение.
+dnd_hours_utc = ""
+
+[windowed_qa]
+# Утреннее окно активности UTC: начало включительно, конец исключительно.
+morning_window_utc = [10, 11]
+
+# Вечернее окно активности UTC: начало включительно, конец исключительно.
+evening_window_utc = [16, 18]
+
+# Для initiator: случайный offset от начала окна в минутах.
+initiator_offset_minutes = [0, 30]
+
+# Для responder: случайная задержка ответа на вопрос initiator-а в минутах.
+responder_delay_minutes = [8, 12]
+
+# Защита от дублей: максимум обменов вопрос-ответ внутри одного окна.
+max_exchanges_per_window = 1
+
+[reply_guard]
+# Изолированный ответ на reply пользователя именно к сообщению бота.
+enabled = false
+
+# Городская область справки.
+city = "Нячанг"
+
+# Фиксированный отказ для off-topic и prompt-injection.
+refusal_text = "Кажется, это чуть не по теме. Уточните, пожалуйста, вопрос про Нячанг."
+
+# Модель и температура для строгого классификатора on_topic/off_topic/injection.
+classifier_model = "gemini-3-flash-preview"
+classifier_temperature = 0.1
+
+# Максимальная длина пользовательского вопроса после sanitize.
+max_input_chars = 500
+
+# Очередь reply_guard хранится отдельной таблицей в основной SQLite-БД из [paths].db_path.
+
+# Период polling-а одного последовательного воркера.
+worker_poll_interval_seconds = 0.5
+
+# Максимум попыток при временных ошибках Gemini.
+max_attempts = 3
+retry_backoff_seconds = [2, 8, 30]
+
+# Отдельные промты reply_guard, не связанные с reply.md и reply_rules.md.
+system_prompt_path = "ai/prompts/reply_guard/system.md"
+classifier_prompt_path = "ai/prompts/reply_guard/classifier.md"

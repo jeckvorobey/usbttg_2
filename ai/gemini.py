@@ -50,7 +50,7 @@ class PromptLoader:
         if not path.exists():
             logger.error("Файл промта не найден: %s", path)
             raise FileNotFoundError(path)
-        content = await asyncio.to_thread(path.read_text, encoding="utf-8")
+        content = path.read_text(encoding="utf-8")
         logger.info("Промт '%s' успешно загружен", name)
         return content
 
@@ -68,6 +68,7 @@ class GeminiClient:
         retry_backoff_seconds: float = 1.0,
         retry_jitter_seconds: float = 0.0,
         request_timeout_seconds: float = 45.0,
+        temperature: float = 0.9,
     ) -> None:
         """
         Инициализирует клиент Gemini.
@@ -81,6 +82,7 @@ class GeminiClient:
             retry_backoff_seconds: Базовая задержка между повторными попытками.
             retry_jitter_seconds: Максимальная случайная добавка к задержке между попытками.
             request_timeout_seconds: Максимальное время ожидания одного запроса к Gemini.
+            temperature: Креативность генерации Gemini в диапазоне 0.0..2.0.
         """
         self.api_key = api_key
         self.model_name = model_name
@@ -90,6 +92,7 @@ class GeminiClient:
         self.retry_backoff_seconds = max(0.0, retry_backoff_seconds)
         self.retry_jitter_seconds = max(0.0, retry_jitter_seconds)
         self.request_timeout_seconds = max(0.1, request_timeout_seconds)
+        self.temperature = min(2.0, max(0.0, temperature))
         self._client: Any | None = None
         self._types: Any | None = None
 
@@ -138,7 +141,10 @@ class GeminiClient:
         """Выполняет один вызов модели и нормализует ответ."""
         client = self._get_client()
         types_module = self._get_types_module()
-        config = types_module.GenerateContentConfig(system_instruction=system_prompt)
+        config = types_module.GenerateContentConfig(
+            system_instruction=system_prompt,
+            temperature=self.temperature,
+        )
         last_error: Exception | None = None
 
         model_names = self._get_model_names()

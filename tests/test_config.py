@@ -97,7 +97,7 @@ def test_load_settings_or_exit_logs_validation_error(monkeypatch, caplog, tmp_pa
                 load_settings_or_exit()
 
         messages = [record.getMessage() for record in caplog.records]
-        assert any("Ошибка конфигурации окружения" in message for message in messages)
+        assert any("Ошибка конфигурации" in message for message in messages)
 
 
 def test_settings_has_db_path():
@@ -133,6 +133,34 @@ def test_settings_reads_proxy_url():
         assert s.proxy_url == "http://user:pass@127.0.0.1:8080"
 
 
+def test_settings_reads_group_target_from_env():
+    """Проверяет загрузку целевой Telegram-группы из переменных окружения."""
+    env = {
+        **BASE_ENV,
+        "GROUP_CHAT_ID": "-1001234567890",
+        "GROUP_TARGET": "https://t.me/example_group",
+    }
+    with patch.dict(os.environ, env, clear=True):
+        from core.config import Settings
+
+        s = Settings(_env_file=None)
+
+    assert s.group_chat_id == -1001234567890
+    assert s.group_target == "https://t.me/example_group"
+
+
+def test_settings_normalizes_empty_group_target_env():
+    """Проверяет, что пустая строковая Telegram-цель отключается."""
+    env = {**BASE_ENV, "GROUP_CHAT_ID": "0", "GROUP_TARGET": "   "}
+    with patch.dict(os.environ, env, clear=True):
+        from core.config import Settings
+
+        s = Settings(_env_file=None)
+
+    assert s.group_chat_id is None
+    assert s.group_target is None
+
+
 def test_settings_proxy_url_defaults_to_none():
     """Проверяет, что proxy URL по умолчанию отключён."""
     with patch.dict(os.environ, BASE_ENV, clear=True):
@@ -154,34 +182,56 @@ def test_settings_log_level_defaults_to_info():
 
 
 def test_settings_reads_gemini_resilience_options():
-    """Проверяет загрузку резервной модели и retry-параметров Gemini из окружения."""
-    env = {
-        **BASE_ENV,
-        "GEMINI_FALLBACK_MODEL": "gemini-2.5-flash-lite",
-        "GEMINI_MAX_RETRIES": "4",
-        "GEMINI_RETRY_BACKOFF_SECONDS": "2.0",
-        "GEMINI_RETRY_JITTER_SECONDS": "0.4",
-    }
-    with patch.dict(os.environ, env, clear=True):
-        from core.config import Settings
+    """Проверяет загрузку резервной модели и retry-параметров Gemini из TOML."""
+    import tempfile
+    from pathlib import Path
 
-        s = Settings(_env_file=None)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        settings_path = Path(tmpdir) / "settings.toml"
+        settings_path.write_text(
+            """
+            [gemini]
+            fallback_model = "gemini-2.5-flash-lite"
+            max_retries = 4
+            retry_backoff_seconds = 2.0
+            retry_jitter_seconds = 0.4
+            """,
+            encoding="utf-8",
+        )
+        env = {**BASE_ENV, "SETTINGS_PATH": str(settings_path)}
 
-        assert s.gemini_fallback_model == "gemini-2.5-flash-lite"
-        assert s.gemini_max_retries == 4
-        assert s.gemini_retry_backoff_seconds == 2.0
-        assert s.gemini_retry_jitter_seconds == 0.4
+        with patch.dict(os.environ, env, clear=True):
+            from core.config import Settings
+
+            s = Settings(_env_file=None)
+
+    assert s.gemini_fallback_model == "gemini-2.5-flash-lite"
+    assert s.gemini_max_retries == 4
+    assert s.gemini_retry_backoff_seconds == 2.0
+    assert s.gemini_retry_jitter_seconds == 0.4
 
 
 def test_settings_reads_dnd_hours_utc():
-    """Проверяет загрузку UTC-интервала режима не беспокоить."""
-    env = {**BASE_ENV, "DND_HOURS_UTC": "23-7"}
-    with patch.dict(os.environ, env, clear=True):
-        from core.config import Settings
+    """Проверяет загрузку UTC-интервала режима не беспокоить из TOML."""
+    import tempfile
+    from pathlib import Path
 
-        s = Settings(_env_file=None)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        settings_path = Path(tmpdir) / "settings.toml"
+        settings_path.write_text(
+            """
+            [legacy_session]
+            dnd_hours_utc = "23-7"
+            """,
+            encoding="utf-8",
+        )
+        env = {**BASE_ENV, "SETTINGS_PATH": str(settings_path)}
+        with patch.dict(os.environ, env, clear=True):
+            from core.config import Settings
 
-        assert s.dnd_hours_utc == "23-7"
+            s = Settings(_env_file=None)
+
+    assert s.dnd_hours_utc == "23-7"
 
 
 @pytest.mark.parametrize(
@@ -189,10 +239,22 @@ def test_settings_reads_dnd_hours_utc():
     ["24-7", "7-24", "aa-bb", "7", "7-", "-7", "7:00-8:00"],
 )
 def test_settings_rejects_invalid_dnd_hours_utc(value: str):
-    """Проверяет валидацию некорректного DND-интервала."""
-    env = {**BASE_ENV, "DND_HOURS_UTC": value}
-    with patch.dict(os.environ, env, clear=True):
-        from core.config import Settings
+    """Проверяет валидацию некорректного DND-интервала в TOML."""
+    import tempfile
+    from pathlib import Path
 
-        with pytest.raises(Exception):
-            Settings(_env_file=None)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        settings_path = Path(tmpdir) / "settings.toml"
+        settings_path.write_text(
+            f"""
+            [legacy_session]
+            dnd_hours_utc = "{value}"
+            """,
+            encoding="utf-8",
+        )
+        env = {**BASE_ENV, "SETTINGS_PATH": str(settings_path)}
+        with patch.dict(os.environ, env, clear=True):
+            from core.config import Settings
+
+            with pytest.raises(Exception):
+                Settings(_env_file=None)

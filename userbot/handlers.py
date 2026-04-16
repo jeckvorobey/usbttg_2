@@ -67,6 +67,10 @@ async def handle_new_message(
         event: Telethon событие нового сообщения.
         whitelist: Экземпляр фильтра whitelist для проверки отправителя.
     """
+    if getattr(event, "_reply_guard_consumed", False):
+        logger.info("Сообщение пропущено: уже обработано reply_guard")
+        return
+
     sender_id = getattr(event, "sender_id", None)
     if sender_id is None:
         logger.warning("Сообщение пропущено: sender_id отсутствует")

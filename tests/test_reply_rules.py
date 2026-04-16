@@ -96,17 +96,30 @@ notes: Только один раз.
 
 
 def test_settings_reads_reply_rules_path():
-    """Проверяет загрузку пути к markdown-файлу правил из окружения."""
-    base_env = {
-        "API_ID": "12345678",
-        "API_HASH": "test_api_hash_abc",
-        "GEMINI_API_KEY": "test_gemini_key_xyz",
-        "SESSION_STRING": "test-session-string",
-        "REPLY_RULES_PATH": "custom/reply_rules.md",
-    }
-    with patch.dict("os.environ", base_env, clear=True):
-        from core.config import Settings
+    """Проверяет загрузку пути к markdown-файлу правил из TOML."""
+    import tempfile
+    from pathlib import Path
 
-        settings = Settings(_env_file=None)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        settings_path = Path(tmpdir) / "settings.toml"
+        settings_path.write_text(
+            """
+            [paths]
+            reply_rules_path = "custom/reply_rules.md"
+            """,
+            encoding="utf-8",
+        )
 
-        assert settings.reply_rules_path == "custom/reply_rules.md"
+        base_env = {
+            "API_ID": "12345678",
+            "API_HASH": "test_api_hash_abc",
+            "GEMINI_API_KEY": "test_gemini_key_xyz",
+            "SESSION_STRING": "test-session-string",
+            "SETTINGS_PATH": str(settings_path),
+        }
+        with patch.dict("os.environ", base_env, clear=True):
+            from core.config import Settings
+
+            settings = Settings(_env_file=None)
+
+            assert settings.reply_rules_path == "custom/reply_rules.md"
