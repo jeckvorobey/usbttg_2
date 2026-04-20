@@ -9,6 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
+from dotenv import dotenv_values
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, field_validator
 from pydantic_core import PydanticCustomError
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -56,7 +57,6 @@ def _normalize_optional_chat_id(v: object) -> object:
 OptionalChatId = Annotated[int | None, BeforeValidator(_normalize_optional_chat_id)]
 OptionalStr = Annotated[str | None, BeforeValidator(_normalize_optional_str)]
 RequiredStr = Annotated[str, BeforeValidator(_require_non_empty_str)]
-HourWindow = tuple[int, int]
 MinuteRange = tuple[int, int]
 
 
@@ -72,7 +72,7 @@ class Secrets(BaseSettings):
     api_id: int
     api_hash: str
     gemini_api_key: str
-    session_string: RequiredStr
+    session_string: OptionalStr = None
     proxy_url: OptionalStr = None
     group_chat_id: OptionalChatId = None
     group_target: OptionalStr = None
@@ -85,25 +85,37 @@ class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ModeConfig(_StrictModel):
-    """Выбранный режим работы инстанса."""
+class AppModeConfig(_StrictModel):
+    """Секция режима приложения."""
 
-    active: Literal["legacy_session", "windowed_qa"] = "legacy_session"
-
-
-class BotConfig(_StrictModel):
-    """Роль инстанса в windowed_qa."""
-
-    role: Literal["initiator", "responder"] = "initiator"
+    mode: Literal["swarm"] = "swarm"
 
 
 class PathsConfig(_StrictModel):
-    """Пути к локальным ресурсам проекта."""
+    """Пути к локальным ресурсам проекта, не покрытым профильными секциями."""
+
+    reply_rules_path: str = "ai/prompts/reply_rules.md"
+
+
+class StorageConfig(_StrictModel):
+    """Пути к хранилищу."""
 
     db_path: str = "data/history.db"
+
+
+class TargetConfig(_StrictModel):
+    """Целевая Telegram-группа для swarm."""
+
+    group_chat_id: int | None = None
+    group_target: OptionalStr = None
+
+
+class PromptsConfig(_StrictModel):
+    """Пути к промтам и профилям ботов."""
+
+    base_dir: str = "ai/prompts"
     topics_path: str = "ai/prompts/topics.md"
-    reply_rules_path: str = "ai/prompts/reply_rules.md"
-    prompts_dir: str = "ai/prompts"
+    bot_profiles_dir: str = "ai/prompts/bots"
 
 
 class GeminiConfig(_StrictModel):
@@ -130,60 +142,54 @@ class LoggingConfig(_StrictModel):
     level: str = "INFO"
 
 
-class LegacySessionConfig(_StrictModel):
-    """Параметры старого режима 30-минутных сессий."""
+class SwarmBotConfig(_StrictModel):
+    """Конфигурация одного userbot в swarm-режиме."""
 
-    scheduler_enabled: bool = True
-    silence_check_interval_minutes: int = Field(default=5, ge=1)
-    silence_timeout_minutes: int = Field(default=60, ge=0)
-    session_duration_minutes: int = Field(default=30, ge=1)
-    dnd_hours_utc: OptionalStr = None
-
-    @field_validator("dnd_hours_utc", mode="before")
-    @classmethod
-    def validate_dnd_hours_utc(cls, value: object) -> object:
-        """Проверяет формат UTC-интервала режима не беспокоить."""
-        value = _normalize_optional_str(value)
-        if value is None:
-            return None
-        if not isinstance(value, str):
-            return value
-
-        parts = value.split("-", maxsplit=1)
-        if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
-            raise PydanticCustomError(
-                "invalid_dnd_hours_utc",
-                "dnd_hours_utc должен быть в формате HH-HH",
-            )
-
-        start_hour = int(parts[0])
-        end_hour = int(parts[1])
-        if not (0 <= start_hour <= 23 and 0 <= end_hour <= 23):
-            raise PydanticCustomError(
-                "invalid_dnd_hours_utc",
-                "Часы в dnd_hours_utc должны быть в диапазоне 0..23",
-            )
-
-        return f"{start_hour}-{end_hour}"
+    id: str
+    session_env: str
+    persona_file: str
+    enabled: bool = True
+    temperature: float = Field(default=0.9, ge=0.0, le=2.0)
 
 
-class WindowedQAConfig(_StrictModel):
-    """Параметры режима одного вопроса и одного ответа в UTC-окнах."""
+class SwarmBotRuntimeConfig(_StrictModel):
+    """Развёрнутая runtime-конфигурация userbot с реальной строкой сессии."""
 
-    morning_window_utc: HourWindow = (10, 11)
-    evening_window_utc: HourWindow = (16, 18)
+    id: str
+    session_env: str
+    session_string: str
+    persona_file: str
+    enabled: bool = True
+    temperature: float = Field(default=0.9, ge=0.0, le=2.0)
+
+
+class SwarmScheduleConfig(_StrictModel):
+    """Расписание swarm-обменов."""
+
+    active_windows_utc: list[str] = Field(default_factory=list)
     initiator_offset_minutes: MinuteRange = (0, 30)
-    responder_delay_minutes: MinuteRange = (8, 12)
-    max_exchanges_per_window: int = Field(default=1, ge=1)
+    responder_delay_minutes: MinuteRange = (3, 10)
+    max_turns_per_exchange: int = Field(default=2, ge=1)
+    pair_cooldown_slots: int = Field(default=1, ge=0)
 
-    @field_validator("morning_window_utc", "evening_window_utc", mode="before")
+    @field_validator("active_windows_utc")
     @classmethod
-    def validate_hour_window(cls, value: object) -> object:
-        """Проверяет пару часов UTC, включая окна через полночь."""
-        start, end = _read_pair(value, "Окно UTC")
-        if not (0 <= start <= 23 and 0 <= end <= 24 and start != end):
-            raise ValueError("Окно UTC должно удовлетворять 0 <= start <= 23, 0 <= end <= 24 и start != end")
-        return (start, end)
+    def validate_active_windows_utc(cls, value: list[str]) -> list[str]:
+        """Проверяет список UTC-окон в формате HH-HH."""
+        validated: list[str] = []
+        for item in value:
+            normalized = _normalize_optional_str(item)
+            if not isinstance(normalized, str):
+                raise ValueError("Каждое окно active_windows_utc должно быть строкой")
+            parts = normalized.split("-", maxsplit=1)
+            if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+                raise ValueError("active_windows_utc должен содержать окна в формате HH-HH")
+            start_hour = int(parts[0])
+            end_hour = int(parts[1])
+            if not (0 <= start_hour <= 23 and 0 <= end_hour <= 24 and start_hour != end_hour):
+                raise ValueError("active_windows_utc должен удовлетворять 0 <= start <= 23, 0 <= end <= 24 и start != end")
+            validated.append(f"{start_hour}-{end_hour}")
+        return validated
 
     @field_validator("initiator_offset_minutes", "responder_delay_minutes", mode="before")
     @classmethod
@@ -195,34 +201,50 @@ class WindowedQAConfig(_StrictModel):
         return (start, end)
 
 
-class ReplyGuardConfig(_StrictModel):
-    """Параметры изолированного reply_guard."""
+class SwarmOrchestratorConfig(_StrictModel):
+    """Параметры центрального orchestrator."""
+
+    tick_seconds: int = Field(default=30, ge=1)
+    silence_timeout_minutes: int = Field(default=60, ge=0)
+    skip_if_recent_human_activity: bool = True
+
+
+class SwarmConfig(_StrictModel):
+    """Секция swarm-настроек."""
 
     enabled: bool = False
-    city: str = "Нячанг"
-    refusal_text: str = "Кажется, это чуть не по теме. Уточните, пожалуйста, вопрос про Нячанг."
-    classifier_model: str = "gemini-3-flash-preview"
-    classifier_temperature: float = Field(default=0.1, ge=0.0, le=2.0)
-    max_input_chars: int = Field(default=500, ge=1)
-    worker_poll_interval_seconds: float = Field(default=0.5, gt=0.0)
-    max_attempts: int = Field(default=3, ge=1)
-    retry_backoff_seconds: list[float] = Field(default_factory=lambda: [2.0, 8.0, 30.0])
-    system_prompt_path: str = "ai/prompts/reply_guard/system.md"
-    classifier_prompt_path: str = "ai/prompts/reply_guard/classifier.md"
+    max_parallel_bots: int = Field(default=20, ge=1)
+    ignore_messages_from_swarm: bool = True
+    reply_only_to_addressed_bot: bool = True
+    schedule: SwarmScheduleConfig = Field(default_factory=SwarmScheduleConfig)
+    orchestrator: SwarmOrchestratorConfig = Field(default_factory=SwarmOrchestratorConfig)
+    bots: list[SwarmBotConfig] = Field(default_factory=list)
+
+    @field_validator("bots")
+    @classmethod
+    def validate_unique_bot_ids(cls, value: list[SwarmBotConfig]) -> list[SwarmBotConfig]:
+        """Проверяет уникальность идентификаторов ботов."""
+        seen: set[str] = set()
+        for bot in value:
+            normalized_bot_id = bot.id.strip().lower()
+            if normalized_bot_id in seen:
+                raise ValueError(f"duplicate swarm bot id: {bot.id}")
+            seen.add(normalized_bot_id)
+        return value
 
 
 class AppConfig(_StrictModel):
     """Полная несекретная TOML-конфигурация."""
 
-    mode: ModeConfig = Field(default_factory=ModeConfig)
-    bot: BotConfig = Field(default_factory=BotConfig)
+    app: AppModeConfig = Field(default_factory=AppModeConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
+    storage: StorageConfig = Field(default_factory=StorageConfig)
+    target: TargetConfig = Field(default_factory=TargetConfig)
+    prompts: PromptsConfig = Field(default_factory=PromptsConfig)
     gemini: GeminiConfig = Field(default_factory=GeminiConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
-    legacy_session: LegacySessionConfig = Field(default_factory=LegacySessionConfig)
-    windowed_qa: WindowedQAConfig = Field(default_factory=WindowedQAConfig)
-    reply_guard: ReplyGuardConfig = Field(default_factory=ReplyGuardConfig)
+    swarm: SwarmConfig = Field(default_factory=SwarmConfig)
 
 
 def _read_pair(value: object, label: str) -> tuple[int, int]:
@@ -254,10 +276,24 @@ def _load_toml_config(settings_path: str | Path | None, *, require_exists: bool 
     return AppConfig.model_validate(data)
 
 
+def _load_env_lookup(env_file: str | None | object) -> dict[str, str]:
+    """Собирает карту переменных окружения с учётом .env и приоритета os.environ."""
+    env_lookup: dict[str, str] = {}
+
+    if isinstance(env_file, str):
+        env_path = Path(env_file)
+        if env_path.exists():
+            env_lookup.update({key: value for key, value in dotenv_values(env_path).items() if value is not None})
+
+    env_lookup.update(os.environ)
+    return env_lookup
+
+
 class Settings:
     """Фасад конфигурации с прежними публичными именами полей."""
 
     def __init__(self, _env_file: str | None | object = ".env", **overrides: object) -> None:
+        self._env_lookup = _load_env_lookup(_env_file)
         settings_path_override = overrides.pop("settings_path", _UNSET)
         secret_keys = {
             "api_id",
@@ -268,7 +304,7 @@ class Settings:
             "group_chat_id",
             "group_target",
         }
-        required_secret_keys = {"api_id", "api_hash", "gemini_api_key", "session_string"}
+        required_secret_keys = {"api_id", "api_hash", "gemini_api_key"}
         secret_overrides = {key: overrides.pop(key) for key in list(overrides) if key in secret_keys}
 
         if required_secret_keys - secret_overrides.keys():
@@ -301,14 +337,18 @@ class Settings:
             setattr(self, key, value)
 
     def _apply_app_config(self, config: AppConfig) -> None:
-        """Пробрасывает секции TOML в совместимые публичные поля Settings."""
-        self.mode = config.mode.active
-        self.bot_role = config.bot.role
+        """Пробрасывает секции TOML в публичные поля Settings."""
+        self.mode = config.app.mode
 
-        self.db_path = config.paths.db_path
-        self.topics_path = config.paths.topics_path
+        self.db_path = config.storage.db_path
+        self.topics_path = config.prompts.topics_path
         self.reply_rules_path = config.paths.reply_rules_path
-        self.prompts_dir = config.paths.prompts_dir
+        self.prompts_dir = config.prompts.base_dir
+        self.bot_profiles_dir = config.prompts.bot_profiles_dir
+        if self.group_chat_id is None and config.target.group_chat_id is not None:
+            self.group_chat_id = config.target.group_chat_id
+        if self.group_target is None and config.target.group_target is not None:
+            self.group_target = config.target.group_target
 
         self.gemini_model = config.gemini.model
         self.gemini_fallback_model = config.gemini.fallback_model
@@ -322,29 +362,44 @@ class Settings:
 
         self.log_level = config.logging.level
 
-        self.scheduler_enabled = config.legacy_session.scheduler_enabled
-        self.silence_check_interval_minutes = config.legacy_session.silence_check_interval_minutes
-        self.silence_timeout_minutes = config.legacy_session.silence_timeout_minutes
-        self.session_duration_minutes = config.legacy_session.session_duration_minutes
-        self.dnd_hours_utc = config.legacy_session.dnd_hours_utc
+        self.swarm_enabled = config.swarm.enabled or self.mode == "swarm"
+        self.swarm_max_parallel_bots = config.swarm.max_parallel_bots
+        self.swarm_ignore_messages_from_swarm = config.swarm.ignore_messages_from_swarm
+        self.swarm_reply_only_to_addressed_bot = config.swarm.reply_only_to_addressed_bot
+        self.swarm_schedule_active_windows_utc = list(config.swarm.schedule.active_windows_utc)
+        self.swarm_initiator_offset_minutes = config.swarm.schedule.initiator_offset_minutes
+        self.swarm_responder_delay_minutes = config.swarm.schedule.responder_delay_minutes
+        self.swarm_max_turns_per_exchange = config.swarm.schedule.max_turns_per_exchange
+        self.swarm_pair_cooldown_slots = config.swarm.schedule.pair_cooldown_slots
+        self.swarm_tick_seconds = config.swarm.orchestrator.tick_seconds
+        self.swarm_silence_timeout_minutes = config.swarm.orchestrator.silence_timeout_minutes
+        self.swarm_skip_if_recent_human_activity = config.swarm.orchestrator.skip_if_recent_human_activity
+        self.swarm_bots = self._resolve_swarm_bots(config.swarm.bots)
+        self.swarm_bot_ids = [bot.id for bot in self.swarm_bots]
 
-        self.window_morning_utc = config.windowed_qa.morning_window_utc
-        self.window_evening_utc = config.windowed_qa.evening_window_utc
-        self.initiator_offset_minutes = config.windowed_qa.initiator_offset_minutes
-        self.responder_delay_minutes = config.windowed_qa.responder_delay_minutes
-        self.max_exchanges_per_window = config.windowed_qa.max_exchanges_per_window
+        if self.mode == "swarm":
+            self.whitelist_user_ids = ""
 
-        self.reply_guard_enabled = config.reply_guard.enabled
-        self.reply_guard_city = config.reply_guard.city
-        self.reply_guard_refusal_text = config.reply_guard.refusal_text
-        self.reply_guard_classifier_model = config.reply_guard.classifier_model
-        self.reply_guard_classifier_temperature = config.reply_guard.classifier_temperature
-        self.reply_guard_max_input_chars = config.reply_guard.max_input_chars
-        self.reply_guard_worker_poll_interval_seconds = config.reply_guard.worker_poll_interval_seconds
-        self.reply_guard_max_attempts = config.reply_guard.max_attempts
-        self.reply_guard_retry_backoff_seconds = config.reply_guard.retry_backoff_seconds
-        self.reply_guard_system_prompt_path = config.reply_guard.system_prompt_path
-        self.reply_guard_classifier_prompt_path = config.reply_guard.classifier_prompt_path
+    def _resolve_swarm_bots(self, bots: list[SwarmBotConfig]) -> list[SwarmBotRuntimeConfig]:
+        """Разворачивает session_env каждого swarm-бота в фактическую строку сессии."""
+        resolved_bots: list[SwarmBotRuntimeConfig] = []
+        for bot in bots:
+            session_string = self._env_lookup.get(bot.session_env)
+            if session_string is None or session_string.strip() == "":
+                raise ValueError(f"Swarm bot session env is missing or empty: {bot.session_env}")
+            resolved_bots.append(
+                SwarmBotRuntimeConfig.model_validate(
+                    {
+                        "id": bot.id,
+                        "session_env": bot.session_env,
+                        "session_string": session_string.strip(),
+                        "persona_file": bot.persona_file,
+                        "enabled": bot.enabled,
+                        "temperature": bot.temperature,
+                    },
+                )
+            )
+        return resolved_bots
 
 
 @lru_cache(maxsize=1)

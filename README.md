@@ -1,253 +1,338 @@
-# tg_userbot — Telegram Userbot с Gemini AI
+# tg_userbot
 
-Userbot на базе Telethon, который отвечает на сообщения в группе через Gemini AI и самостоятельно инициирует разговоры по расписанию.
+`tg_userbot` это Telegram userbot-проект, в котором несколько аккаунтов работают как один `swarm`.
 
----
+Проще говоря:
+- несколько Telegram-аккаунтов запускаются в одном процессе;
+- каждый аккаунт сидит в одной целевой группе и остаётся онлайн;
+- если человек отвечает `reply` на сообщение конкретного аккаунта, отвечает только этот аккаунт;
+- по расписанию приложение само запускает небольшие диалоги между ботами;
+- история сообщений и история таких обменов сохраняется в SQLite;
+- проект старается не повторять одни и те же вопросы слишком часто;
+- ключевые действия подробно пишутся в лог.
 
-## Быстрый старт
+## Что приложение делает сейчас
 
-### 0. Установить uv (если ещё нет)
+В проекте есть два основных сценария работы.
+
+### 1. Ответ на адресный `reply`
+
+Если человек в группе отвечает на сообщение бота через Telegram `reply`, приложение:
+- понимает, какому именно аккаунту адресован ответ;
+- игнорирует остальные аккаунты swarm;
+- собирает историю диалога из SQLite;
+- подставляет persona нужного бота и базовые промты;
+- запрашивает текст ответа у Gemini;
+- отправляет ответ в группу;
+- сохраняет и сообщение пользователя, и ответ бота в БД.
+
+### 2. Плановый обмен между ботами
+
+По расписанию orchestrator:
+- проверяет, что текущее время входит в разрешённое UTC-окно;
+- может пропустить запуск, если недавно была активность от человека;
+- выбирает пару `бот A -> бот B`;
+- выбирает тему;
+- сверяется с persisted history, чтобы не повторять недавние темы и вопросы;
+- генерирует стартовое сообщение от `A`;
+- затем генерирует ответ от `B`;
+- сохраняет весь exchange в SQLite.
+
+## Что нужно для запуска
+
+Для работы нужны:
+- Python `3.11+`;
+- `uv` для установки зависимостей и запуска команд;
+- `API_ID` и `API_HASH` Telegram;
+- `GEMINI_API_KEY`;
+- `SESSION_STRING_*` для каждого Telegram-аккаунта из swarm-конфига;
+- файл настроек TOML;
+- persona-файлы для ботов.
+
+## Быстрый запуск
+
+### 1. Установить зависимости
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-После установки перезапусти терминал или выполни `source ~/.bashrc` (или `~/.zshrc`).
-
-### 1. Клонировать и установить зависимости
-
-```bash
-git clone <repo-url>
-cd usbttg
 uv sync
 ```
 
-`uv sync` сам создаст виртуальное окружение `.venv` и установит все зависимости из `uv.lock`. Python 3.11+ устанавливать отдельно не нужно — если нужной версии нет, `uv` скачает её сам.
+### 2. Создать `.env`
 
-### 2. Настроить `.env`
+Скопируй шаблон:
 
 ```bash
 cp .env.example .env
-nano .env
 ```
 
-Заполнить обязательные поля:
+Минимально в `.env` должны быть:
 
-| Переменная       | Где взять                                                           |
-|------------------|---------------------------------------------------------------------|
-| `API_ID`         | [my.telegram.org](https://my.telegram.org) → API development tools |
-| `API_HASH`       | Там же                                                              |
-| `GEMINI_API_KEY` | [aistudio.google.com](https://aistudio.google.com/app/apikey)      |
-| `SESSION_STRING` | Строковая Telethon-сессия (см. раздел ниже)                        |
-| `PROXY_URL`      | Необязательно. Пример: `http://user:pass@host:port`                |
-| `GROUP_CHAT_ID`  | Необязательно. `chat_id` группы для фильтрации входящих сообщений  |
-| `GROUP_TARGET`   | Необязательно. `@username` или ссылка группы для исходящих постов  |
+```dotenv
+API_ID=12345678
+API_HASH=your_telegram_api_hash
+GEMINI_API_KEY=your_gemini_api_key
+SETTINGS_PATH=config/settings.toml
+SESSION_STRING_ANNA=...
+SESSION_STRING_MIKE=...
+```
 
-Дополнительно можно настроить устойчивость Gemini при перегрузке:
+Важно:
+- имя переменной `SESSION_STRING_*` должно совпадать с `session_env` у бота в TOML;
+- `SESSION_STRING_*` нельзя коммитить и нельзя логировать.
 
-- `GEMINI_FALLBACK_MODEL` — резервная модель, на которую бот переключится после неудачных повторов основной.
-- `GEMINI_MAX_RETRIES` — число повторов на одну модель.
-- `GEMINI_RETRY_BACKOFF_SECONDS` — базовая задержка для экспоненциального backoff.
-- `GEMINI_RETRY_JITTER_SECONDS` — случайная добавка к задержке, чтобы не бить в API синхронно.
+### 3. Создать файл настроек
 
-### 3. Получить SESSION_STRING
+Скопируй пример:
 
-`SESSION_STRING` — это строковая Telethon-сессия, которая заменяет логин/пароль. Получить её можно один раз:
+```bash
+cp config/settings.example.toml config/settings.toml
+```
+
+Минимальный пример:
+
+```toml
+[app]
+mode = "swarm"
+
+[target]
+group_chat_id = -1001234567890
+group_target = "@my_group"
+
+[storage]
+db_path = "data/history.db"
+
+[prompts]
+base_dir = "ai/prompts"
+topics_path = "ai/prompts/topics.md"
+bot_profiles_dir = "ai/prompts/bots"
+
+[gemini]
+model = "gemini-2.5-flash"
+fallback_model = "gemini-2.5-flash-lite"
+temperature = 0.9
+
+[logging]
+level = "INFO"
+
+[swarm]
+enabled = true
+reply_only_to_addressed_bot = true
+
+[swarm.schedule]
+active_windows_utc = ["10-11", "16-18"]
+initiator_offset_minutes = [0, 30]
+responder_delay_minutes = [3, 10]
+max_turns_per_exchange = 2
+pair_cooldown_slots = 1
+
+[swarm.orchestrator]
+tick_seconds = 30
+silence_timeout_minutes = 60
+skip_if_recent_human_activity = true
+
+[[swarm.bots]]
+id = "anna"
+session_env = "SESSION_STRING_ANNA"
+persona_file = "anna.md"
+enabled = true
+temperature = 0.9
+
+[[swarm.bots]]
+id = "mike"
+session_env = "SESSION_STRING_MIKE"
+persona_file = "mike.md"
+enabled = true
+temperature = 0.8
+```
+
+На что обратить внимание:
+- `group_chat_id` и `group_target` должны указывать на одну и ту же группу;
+- `db_path` это путь к SQLite-файлу;
+- `bot_profiles_dir` это папка с persona-файлами;
+- каждый `persona_file` должен реально существовать;
+- для каждого `session_env` должна быть переменная в `.env`.
+
+### 4. Подготовить persona-файлы
+
+Проект ожидает persona-файлы в директории, указанной в `bot_profiles_dir`.
+
+Если у тебя в конфиге:
+
+```toml
+[prompts]
+bot_profiles_dir = "ai/prompts/bots"
+```
+
+то должны существовать файлы вроде:
+- `ai/prompts/bots/anna.md`
+- `ai/prompts/bots/mike.md`
+
+### 5. Получить `SESSION_STRING` для каждого аккаунта
+
+Для каждого Telegram-аккаунта нужно один раз получить строку сессии.
+
+Пример команды:
 
 ```bash
 uv run python -c "
 from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
-import os
 
 api_id = int(input('API_ID: '))
 api_hash = input('API_HASH: ')
 
 with TelegramClient(StringSession(), api_id, api_hash) as client:
-    print('SESSION_STRING:', client.session.save())
+    print(client.session.save())
 "
 ```
 
-Скопируй выведенную строку и вставь в `.env` в поле `SESSION_STRING`.
+Дальше:
+- входишь в нужный Telegram-аккаунт;
+- копируешь выведенную строку;
+- сохраняешь её в `.env` как `SESSION_STRING_<ИМЯ>`.
 
-**Внимание:** это авторизованная сессия твоего аккаунта. Не публикуй её и не передавай третьим лицам.
+## Как запустить приложение
 
-### 4. Добавить пользователей в whitelist
-
-```bash
-nano data/whitelist.md
-```
-
-Добавить Telegram `user_id` (один на строку):
-
-```
-123456789
-7092621358
-```
-
-Узнать свой `user_id` можно написав боту `@userinfobot`.
-
-### 5. Запустить
+Основной запуск:
 
 ```bash
 uv run python run.py
 ```
 
----
+Что произойдёт после запуска:
+- загрузится `.env` и TOML-конфиг;
+- инициализируется SQLite;
+- загрузятся темы и промты;
+- поднимутся все включённые swarm-аккаунты;
+- зарегистрируются обработчики входящих `reply`;
+- запустится scheduler для плановых обменов;
+- в логах появится информация о целевой группе и активных ботах.
 
-## Запуск в фоне (постоянная работа)
+Если всё настроено правильно, приложение будет работать как постоянный фоновый worker.
 
-### Вариант 0 — Coolify
+## Как понять, что запуск прошёл нормально
 
-В репозитории есть `Dockerfile` для деплоя как background worker.
+Нормальные признаки:
+- нет `Ошибка конфигурации` при старте;
+- в логах видно, что таблицы SQLite созданы или готовы;
+- в логах видно запуск каждого `bot_id`;
+- в логах видно, что целевая группа успешно определена;
+- процесс не завершается сразу после старта.
 
-Что настроить в Coolify:
+Если приложение не стартует, сначала проверь:
+- заполнен ли `.env`;
+- существует ли `config/settings.toml`;
+- совпадают ли `session_env` и реальные имена переменных в `.env`;
+- существуют ли persona-файлы;
+- корректны ли `group_chat_id` и `group_target`.
 
-- Тип сервиса: worker/background service, без публичного порта.
-- Build Pack: Dockerfile.
-- Persistent Volume: примонтировать в `/data`.
-- Environment Variables: передать `API_ID`, `API_HASH`, `GEMINI_API_KEY`, `SESSION_STRING`, `SETTINGS_PATH` и при необходимости `GROUP_CHAT_ID`, `GROUP_TARGET`, `PROXY_URL`. Whitelist остаётся в `config/settings.toml`.
+## Как протестировать проект
 
-Для автопоста по расписанию в каналы и супергруппы лучше задавать `GROUP_TARGET` (`@username` или `https://t.me/...`). Одного `GROUP_CHAT_ID=-100...` часто недостаточно: Telethon нужен резолвнутый `entity` с `access_hash`.
-
-Важно:
-
-- В контейнере по умолчанию используется `DB_PATH=/data/history.db`, чтобы SQLite переживал рестарты и перевыкатки.
-- `ai/prompts/topics.md` и `ai/prompts/*.md` входят в образ, отдельный volume для них не нужен.
-- `.env` в образ не копируется, секреты нужно задавать через интерфейс Coolify.
-
-### Вариант 1 — systemd (рекомендуется)
-
-Создать файл службы:
-
-```bash
-sudo nano /etc/systemd/system/tg-userbot.service
-```
-
-Вставить (заменить пути и имя пользователя на свои):
-
-```ini
-[Unit]
-Description=Telegram Userbot с Gemini AI
-After=network.target
-
-[Service]
-Type=simple
-User=YOUR_USER
-WorkingDirectory=/path/to/usbttg
-ExecStart=/path/to/usbttg/.venv/bin/python run.py
-Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Активировать и запустить:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable tg-userbot
-sudo systemctl start tg-userbot
-```
-
-Проверить статус:
-
-```bash
-sudo systemctl status tg-userbot
-```
-
-Смотреть логи:
-
-```bash
-sudo journalctl -u tg-userbot -f
-```
-
----
-
-### Вариант 2 — screen (проще, без прав sudo)
-
-```bash
-screen -S userbot
-uv run python run.py
-```
-
-Отключиться от сессии (бот продолжит работать): `Ctrl+A`, затем `D`
-
-Вернуться к сессии:
-
-```bash
-screen -r userbot
-```
-
----
-
-### Вариант 3 — nohup (минимальный)
-
-```bash
-nohup uv run python run.py > logs/userbot.log 2>&1 &
-echo $! > userbot.pid
-```
-
-Остановить:
-
-```bash
-kill $(cat userbot.pid)
-```
-
----
-
-## Разовая отправка сообщения
-
-Скрипт `send_hello.py` позволяет отправить сообщение вручную:
-
-```bash
-# Отредактировать TARGET в send_hello.py
-nano send_hello.py  # TARGET = "@username" или "+79XXXXXXXXXX"
-
-uv run python send_hello.py
-```
-
----
-
-## Структура проекта
-
-```
-├── run.py              — Точка входа, запускает userbot
-├── send_hello.py       — Разовая отправка сообщения
-├── pyproject.toml      — Зависимости проекта (управляется uv)
-├── uv.lock             — Зафиксированные версии зависимостей
-├── .env                — Секреты (не в git)
-├── .env.example        — Шаблон настроек
-├── ai/
-│   ├── gemini.py       — Клиент Gemini API
-│   ├── history.py      — История диалогов в SQLite
-│   └── prompts/        — Промты в формате .md
-├── userbot/
-│   ├── client.py       — Telethon клиент
-│   ├── handlers.py     — Обработчики сообщений
-│   └── scheduler.py    — Планировщик разговоров
-├── core/
-│   └── config.py       — Настройки через pydantic-settings
-└── data/
-    ├── whitelist.md    — Список разрешённых user_id
-    ├── topics.md       — Темы для инициирования разговора
-```
-
----
-
-## Тесты
+### Полный прогон тестов
 
 ```bash
 uv run pytest
 ```
 
----
+Эта команда проверяет:
+- конфигурацию;
+- prompt composer;
+- историю и SQLite-слой;
+- exchange store;
+- reply router;
+- orchestrator;
+- scheduler;
+- runtime и bootstrap;
+- вспомогательные скрипты.
 
-## Важно
+### Быстрая проверка, что тесты вообще собираются
 
-- `SESSION_STRING` — это авторизованная сессия Telegram. **Не публиковать и не логировать.**
-- `.env` с секретами добавлен в `.gitignore`.
-- Userbot работает от лица реального аккаунта Telegram — используй осторожно, не нарушая ToS Telegram.
+```bash
+uv run pytest --collect-only
+```
+
+Это удобно, если хочешь быстро убедиться, что нет проблем с импортами и структурой тестов.
+
+### Запуск одного тестового файла
+
+Например:
+
+```bash
+uv run pytest tests/test_orchestrator.py
+```
+
+или:
+
+```bash
+uv run pytest tests/test_reply_router.py
+```
+
+## Как проверить руками после запуска
+
+Самая простая ручная проверка такая:
+
+1. Запусти приложение.
+2. Убедись, что все нужные аккаунты вошли в группу.
+3. Напиши сообщение одному из ботов или дождись его сообщения.
+4. Ответь на это сообщение через `reply`.
+5. Проверь, что отвечает именно тот аккаунт, которому был адресован `reply`.
+6. Проверь, что в логах есть запись о маршрутизации и отправке ответа.
+7. Проверь, что SQLite-файл появился и обновляется.
+
+Для проверки планового режима:
+
+1. Временно задай ближайшее `active_windows_utc`.
+2. Запусти приложение.
+3. Подожди несколько scheduler tick.
+4. Проверь, что orchestrator выбрал пару ботов и тему.
+5. Проверь, что в группе появился обмен `A -> B`.
+6. Проверь, что exchange записался в SQLite.
+
+## Вспомогательные скрипты
+
+В проекте есть дополнительные утилиты.
+
+### Посмотреть информацию о текущем Telegram-пользователе
+
+```bash
+uv run python scripts/get_info.py
+```
+
+Скрипт:
+- логинится текущим аккаунтом;
+- собирает публичные атрибуты пользователя;
+- сохраняет отчёт в `tg_user_info/info.txt`.
+
+### Обновить профиль аккаунта
+
+```bash
+uv run python scripts/update_profile.py
+```
+
+Скрипт в интерактивном режиме может:
+- обновить имя;
+- обновить фамилию;
+- обновить username;
+- обновить аватар.
+
+## Важные ограничения
+
+- проект рассчитан на `swarm`-режим;
+- база данных только SQLite;
+- сетевые и БД-операции сделаны асинхронно;
+- persona каждого бота должна загружаться из `persona_file`;
+- все сообщения должны сохраняться в БД;
+- секреты из `.env` нельзя публиковать.
+
+## Коротко: минимальный путь до первого запуска
+
+Если совсем кратко, то порядок такой:
+
+1. Установить зависимости: `uv sync`.
+2. Скопировать `.env.example` в `.env`.
+3. Скопировать `config/settings.example.toml` в `config/settings.toml`.
+4. Заполнить `API_ID`, `API_HASH`, `GEMINI_API_KEY`.
+5. Получить `SESSION_STRING_*` для каждого аккаунта и добавить их в `.env`.
+6. Проверить, что persona-файлы существуют.
+7. Запустить тесты: `uv run pytest`.
+8. Запустить приложение: `uv run python run.py`.

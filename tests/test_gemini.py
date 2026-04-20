@@ -95,7 +95,8 @@ async def test_system_and_reply_prompts_allow_short_multi_sentence_replies():
 
     assert "1–3 коротких предложения" in system_prompt
     assert "Одно предложение" not in reply_prompt
-    assert "не более 3 коротких предложений" in reply_prompt
+    assert "максимум 3" in reply_prompt
+    assert "1-2 коротких предложения" in reply_prompt
 
 
 @pytest.mark.asyncio
@@ -110,6 +111,7 @@ async def test_start_topic_prompt_avoids_editorial_post_format():
     assert "Без «топ-5»" in start_topic_prompt
     assert "только про Нячанг" in start_topic_prompt
     assert "короткий вопрос" in start_topic_prompt
+    assert "максимум 2 совсем короткие фразы" in start_topic_prompt
 
 
 @pytest.mark.asyncio
@@ -122,6 +124,7 @@ async def test_start_topic_prompt_requires_question_without_ready_made_advice():
     assert "Только один короткий вопрос" in start_topic_prompt
     assert "Не пиши готовый ответ" in start_topic_prompt
     assert "Не давай совет" in start_topic_prompt
+    assert "Не превращай вопрос в мини-статью" in start_topic_prompt
     assert "Не используй категоричные формулировки" in start_topic_prompt
 
 

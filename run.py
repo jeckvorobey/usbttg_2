@@ -1,28 +1,52 @@
-"""Точка входа для запуска Telegram userbot'а."""
+"""Точка входа для запуска swarm userbot."""
+
+from __future__ import annotations
 
 import asyncio
 import inspect
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from urllib.parse import urlparse
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from ai.gemini import GeminiClient, PromptLoader
 from ai.history import MessageHistory
-from ai.reply_rules import ReplyRulesLoader
+from ai.prompt_composer import PromptComposer
 from core.config import load_settings_or_exit
 from core.logging import setup_logging
+from core.runtime_models import SwarmBotProfile
 from userbot.client import UserBotClient
-from userbot.handlers import WhitelistFilter, handle_new_message
-from userbot.reply_guard.classifier import ReplyGuardClassifier
-from userbot.reply_guard.handler import build_reply_guard_handler
-from userbot.reply_guard.queue import ReplyGuardQueue
-from userbot.reply_guard.worker import ReplyGuardWorker
-from userbot.scheduler import ConversationSession, SilenceWatcher, TopicSelector, is_dnd_active_utc
-from userbot.windowed_qa import ExchangeTracker, WindowSchedule, build_responder_handler, initiator_job
+from userbot.exchange_store import ExchangeStore
+from userbot.orchestrator import SwarmOrchestrator
+from userbot.reply_router import AddressedReplyRouter
+from userbot.scheduler import TopicSelector
+from userbot.swarm_manager import SwarmManager
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class RuntimeContext:
+    """Переиспользуемые runtime-зависимости приложения."""
+
+    history: MessageHistory
+    prompt_loader: PromptLoader
+    gemini_client: GeminiClient
+    topic_selector: TopicSelector
+    prompt_composer: PromptComposer
+    exchange_store: ExchangeStore
+
+    async def close(self) -> None:
+        """Закрывает runtime-ресурсы с внешними соединениями."""
+        for resource in (self.history, self.exchange_store):
+            close = getattr(resource, "close", None)
+            if callable(close):
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
 
 
 def _utc_now() -> datetime:
@@ -38,16 +62,33 @@ def _iter_candidate_chat_ids(chat_id: int) -> set[int]:
     if chat_id > 0:
         candidates.add(-(10**12 + chat_id))
         return candidates
-
     if absolute_chat_id >= 10**12:
         candidates.add(absolute_chat_id - 10**12)
-
     return candidates
 
 
 def _chat_id_matches(expected_chat_id: int, actual_chat_id: object) -> bool:
     """Проверяет, соответствует ли найденный идентификатор настроенному chat_id."""
     return isinstance(actual_chat_id, int) and actual_chat_id in _iter_candidate_chat_ids(expected_chat_id)
+
+
+def _is_invite_link(target: str | None) -> bool:
+    """Определяет, является ли target приватной invite-ссылкой Telegram."""
+    if not isinstance(target, str):
+        return False
+    normalized = target.strip()
+    return normalized.startswith(("https://t.me/+", "http://t.me/+", "https://t.me/joinchat/", "http://t.me/joinchat/"))
+
+
+def _normalize_public_group_target(target: str) -> str:
+    """Нормализует публичный target группы до формы, совместимой с Telethon."""
+    normalized = target.strip()
+    parsed = urlparse(normalized)
+    if parsed.scheme in {"http", "https"} and parsed.netloc == "t.me":
+        path = parsed.path.strip("/")
+        if path and "/" not in path:
+            return f"@{path}" if not path.startswith("@") else path
+    return normalized
 
 
 async def _resolve_group_target(
@@ -79,76 +120,66 @@ async def _resolve_group_target(
 
     normalized_group_target = group_target.strip() if isinstance(group_target, str) else None
     if normalized_group_target:
+        if group_chat_id is not None and _is_invite_link(normalized_group_target):
+            logger.info("Пропуск get_entity для invite link target=%s", normalized_group_target)
+            return None
         get_entity = getattr(telegram_client, "get_entity", None)
         if get_entity is None:
-            logger.warning(
-                "Не удалось резолвить target группы '%s': клиент не поддерживает get_entity",
-                normalized_group_target,
-            )
+            logger.warning("Не удалось резолвить target группы '%s': get_entity недоступен", normalized_group_target)
             return None
         try:
             resolved_target = await get_entity(normalized_group_target)
         except ValueError:
-            logger.warning(
-                "Не удалось резолвить target группы '%s' через get_entity",
-                normalized_group_target,
-            )
+            logger.warning("Не удалось резолвить target группы '%s' через get_entity", normalized_group_target)
             return None
         setattr(telegram_client, "_resolved_group_chat_id", group_chat_id)
         setattr(telegram_client, "_resolved_group_target", normalized_group_target)
         setattr(telegram_client, "_resolved_group_chat_target", resolved_target)
         return resolved_target
 
-    if group_chat_id is not None:
-        logger.warning("Не удалось найти entity целевой группы для group_chat_id=%s среди диалогов клиента", group_chat_id)
-    else:
-        logger.warning("Не удалось найти entity целевой группы: не заданы GROUP_CHAT_ID и GROUP_TARGET")
+    logger.warning("Не удалось найти entity целевой группы: GROUP_CHAT_ID=%s GROUP_TARGET=%s", group_chat_id, group_target)
     return None
 
 
-async def _sync_group_activity(
-    telegram_client: object | None,
+async def _ensure_group_membership(
+    client_wrapper: UserBotClient,
     group_chat_id: int | None,
     group_target: str | None,
-    silence_watcher: SilenceWatcher,
-) -> None:
-    """Синхронизирует время последней активности по последнему сообщению в группе."""
-    if telegram_client is None or group_chat_id is None:
-        return
+    bot_id: str,
+) -> object | None:
+    """Гарантирует доступ клиента к целевой группе, при необходимости выполняя вступление."""
+    telegram_client = client_wrapper.client
+    resolved_target = await _resolve_group_target(telegram_client, group_chat_id, group_target)
+    if resolved_target is not None:
+        logger.info("swarm: bot_id=%s уже имеет доступ к целевой группе", bot_id)
+        return resolved_target
 
-    get_messages = getattr(telegram_client, "get_messages", None)
-    if get_messages is None:
-        return
+    normalized_target = group_target.strip() if isinstance(group_target, str) else None
+    if not normalized_target:
+        logger.warning("swarm: bot_id=%s пропускает автovступление: group_target не задан", bot_id)
+        return None
 
-    resolved_group_target = await _resolve_group_target(telegram_client, group_chat_id, group_target)
-    if resolved_group_target is None:
-        logger.warning(
-            "Не удалось получить последнее сообщение группы для group_chat_id=%s: entity не резолвится клиентом",
-            group_chat_id,
+    if group_chat_id is not None and _is_invite_link(normalized_target):
+        raise ValueError(
+            f"bot_id={bot_id} не имеет доступа к группе с GROUP_CHAT_ID={group_chat_id}; "
+            "обновите bot membership вручную или задайте актуальный публичный GROUP_TARGET"
         )
-        return
 
-    try:
-        result = get_messages(resolved_group_target, limit=1)
-        if inspect.isawaitable(result):
-            result = await result
-    except ValueError:
-        logger.warning(
-            "Не удалось получить последнее сообщение группы для group_chat_id=%s: entity не резолвится клиентом",
-            group_chat_id,
-        )
-        return
-
-    last_message = None
-    if isinstance(result, list):
-        if result:
-            last_message = result[0]
+    if _is_invite_link(normalized_target):
+        logger.info("swarm: bot_id=%s пытается вступить в группу по invite link", bot_id)
+        await client_wrapper.join_invite_link(normalized_target)
     else:
-        last_message = result
+        public_target = _normalize_public_group_target(normalized_target)
+        logger.info("swarm: bot_id=%s пытается вступить в публичную группу: %s", bot_id, public_target)
+        await client_wrapper.join_group(public_target)
 
-    message_date = getattr(last_message, "date", None)
-    if isinstance(message_date, datetime):
-        silence_watcher.update_last_activity(message_date)
+    resolved_target = await _resolve_group_target(telegram_client, group_chat_id, group_target)
+    if resolved_target is not None:
+        logger.info("swarm: bot_id=%s успешно получил доступ к целевой группе после автovступления", bot_id)
+        return resolved_target
+
+    logger.warning("swarm: bot_id=%s не смог получить доступ к группе после автovступления", bot_id)
+    return None
 
 
 async def _log_resolved_group(
@@ -156,7 +187,7 @@ async def _log_resolved_group(
     group_chat_id: int | None,
     group_target: str | None,
 ) -> None:
-    """Логирует целевую группу, в которой будет работать бот."""
+    """Логирует целевую группу, в которой будет работать swarm."""
     resolved_group_target = await _resolve_group_target(telegram_client, group_chat_id, group_target)
     if resolved_group_target is None:
         logger.warning(
@@ -166,67 +197,20 @@ async def _log_resolved_group(
         )
         return
 
-    group_title = getattr(resolved_group_target, "title", None) or "<без названия>"
-    group_id = getattr(resolved_group_target, "id", None)
-    group_username = getattr(resolved_group_target, "username", None)
-
-    if group_username:
-        logger.info(
-            "Целевая группа определена: title=%s, id=%s, username=@%s",
-            group_title,
-            group_id,
-            group_username,
-        )
-        return
-
     logger.info(
-        "Целевая группа определена: title=%s, id=%s",
-        group_title,
-        group_id,
+        "Целевая группа определена: title=%s id=%s username=%s",
+        getattr(resolved_group_target, "title", None) or "<без названия>",
+        getattr(resolved_group_target, "id", None),
+        getattr(resolved_group_target, "username", None),
     )
 
 
-async def _register_handlers(userbot_client: UserBotClient, whitelist: WhitelistFilter) -> None:
-    """Регистрирует обработчики Telethon, если библиотека доступна."""
-    telegram_client = userbot_client.client
-    if telegram_client is None:
-        logger.warning("Регистрация обработчиков пропущена: Telegram-клиент отсутствует")
-        return
-
-    try:
-        from telethon import events
-    except ImportError:
-        logger.warning("Регистрация обработчиков пропущена: telethon не установлен")
-        return
-
-    async def on_new_message(event: object) -> None:
-        await handle_new_message(event=event, whitelist=whitelist)
-
-    telegram_client.add_event_handler(on_new_message, events.NewMessage())
-    logger.info("Обработчик новых сообщений зарегистрирован")
-
-async def main() -> None:
-    """Инициализирует и запускает userbot."""
-    settings = load_settings_or_exit()
-    setup_logging(settings.log_level)
-    logger.info("Запуск приложения userbot")
-
+async def _build_runtime_context(settings: object) -> RuntimeContext:
+    """Создаёт общие runtime-зависимости swarm."""
     history = MessageHistory(settings.db_path)
-    logger.info("Инициализация хранилища истории сообщений")
     await history.init_db()
 
-    whitelist_ids = {
-        int(uid.strip())
-        for uid in settings.whitelist_user_ids.split(",")
-        if uid.strip().isdigit()
-    }
-    whitelist = WhitelistFilter(user_ids=whitelist_ids)
-    logger.info("Whitelist инициализирован из WHITELIST_USER_IDS: %s пользователей", len(whitelist_ids))
-
     prompt_loader = PromptLoader(settings.prompts_dir)
-    reply_rules_loader = ReplyRulesLoader(settings.reply_rules_path)
-    await reply_rules_loader.load()
-    logger.info("Инициализация Gemini клиента")
     gemini_client = GeminiClient(
         settings.gemini_api_key,
         model_name=settings.gemini_model,
@@ -238,293 +222,174 @@ async def main() -> None:
         request_timeout_seconds=settings.gemini_request_timeout_seconds,
         temperature=settings.gemini_temperature,
     )
-
     topic_selector = TopicSelector(settings.topics_path)
-    logger.info("Загрузка списка тем из %s", settings.topics_path)
     await topic_selector.load()
-    conversation_session = ConversationSession(duration_minutes=settings.session_duration_minutes)
-    silence_watcher = SilenceWatcher()
+    prompt_composer = PromptComposer(prompt_loader=prompt_loader, bot_profiles_dir=settings.bot_profiles_dir)
+    exchange_store = ExchangeStore(settings.db_path)
+    await exchange_store.init_db()
 
-    userbot_client = UserBotClient(
-        session_string=settings.session_string,
-        api_id=settings.api_id,
-        api_hash=settings.api_hash,
-        proxy_url=settings.proxy_url,
+    logger.info(
+        "RuntimeContext инициализирован: db_path=%s prompts_dir=%s topics=%s",
+        settings.db_path,
+        settings.prompts_dir,
+        len(topic_selector.topics),
     )
-    logger.info("Запуск Telegram-клиента")
-    await userbot_client.start()
+    return RuntimeContext(
+        history=history,
+        prompt_loader=prompt_loader,
+        gemini_client=gemini_client,
+        topic_selector=topic_selector,
+        prompt_composer=prompt_composer,
+        exchange_store=exchange_store,
+    )
 
-    telegram_client = userbot_client.client
-    if telegram_client is not None:
-        logger.info("Привязка runtime-зависимостей к Telegram-клиенту")
-        telegram_client.message_history = history
-        telegram_client.prompt_loader = prompt_loader
-        telegram_client.reply_rules_loader = reply_rules_loader
-        telegram_client.gemini_client = gemini_client
-        telegram_client.topic_selector = topic_selector
-        telegram_client.conversation_session = conversation_session
-        telegram_client.silence_watcher = silence_watcher
-        telegram_client.group_chat_id = settings.group_chat_id
-        telegram_client.group_target = settings.group_target
-        telegram_client.dnd_hours_utc = settings.dnd_hours_utc
-        telegram_client.scheduler_enabled = settings.scheduler_enabled
-        await _log_resolved_group(
+
+def _build_swarm_bot_profiles(settings: object) -> list[SwarmBotProfile]:
+    """Преобразует конфигурацию в runtime-профили swarm-ботов."""
+    profiles = [
+        SwarmBotProfile(
+            id=bot.id,
+            session_string=bot.session_string,
+            persona_file=bot.persona_file,
+            enabled=bot.enabled,
+            temperature=bot.temperature,
+            session_env=bot.session_env,
+        )
+        for bot in settings.swarm_bots
+        if bot.enabled
+    ]
+    logger.info("Подготовлены swarm-профили: enabled_bots=%s", len(profiles))
+    return profiles
+
+
+async def _register_swarm_handlers(manager: SwarmManager, runtime: RuntimeContext) -> None:
+    """Регистрирует addressed-reply handlers на всех клиентах swarm."""
+    try:
+        from telethon import events
+    except ImportError:
+        logger.warning("Регистрация swarm handler-ов пропущена: telethon не установлен")
+        return
+
+    active_profiles = {profile.id: profile for profile in manager.bot_profiles if profile.enabled}
+    for bot_id in manager.active_bot_ids:
+        profile = active_profiles.get(bot_id)
+        if profile is None:
+            logger.warning("Пропуск регистрации handler-а: активный bot_id=%s отсутствует в профилях", bot_id)
+            continue
+        client_wrapper = manager.get_client(profile.id)
+        telegram_client = client_wrapper.client
+        router = AddressedReplyRouter(
+            bot_profile=profile,
+            history=runtime.history,
+            prompt_composer=runtime.prompt_composer,
+            gemini_client=runtime.gemini_client,
+            swarm_user_ids=manager.swarm_user_ids,
+            manager=manager,
+        )
+
+        async def on_new_message(event: object, *, _router: AddressedReplyRouter = router) -> None:
+            await _router.handle_event(event)
+
+        telegram_client.add_event_handler(on_new_message, events.NewMessage())
+        logger.info("Зарегистрирован addressed-reply handler: bot_id=%s", profile.id)
+
+
+async def _run_swarm_mode(settings: object, runtime: RuntimeContext, scheduler: AsyncIOScheduler) -> None:
+    """Запускает swarm-режим с постоянным пулом клиентов."""
+    bot_profiles = _build_swarm_bot_profiles(settings)
+    if len(bot_profiles) < 2:
+        raise ValueError("Swarm mode requires at least two enabled bots")
+
+    manager = SwarmManager(
+        bot_profiles=bot_profiles,
+        client_factory=lambda profile: UserBotClient(
+            session_string=profile.session_string,
+            api_id=settings.api_id,
+            api_hash=settings.api_hash,
+            proxy_url=settings.proxy_url,
+        ),
+        startup_hook=lambda profile, client: _ensure_group_membership(
+            client,
+            settings.group_chat_id,
+            settings.group_target,
+            profile.id,
+        ),
+    )
+    await manager.start()
+    if len(manager.active_bot_ids) < 2:
+        raise ValueError("Swarm mode requires at least two active bots after startup")
+    await _register_swarm_handlers(manager, runtime)
+
+    first_client = manager.get_client(manager.active_bot_ids[0]).client
+    await _log_resolved_group(first_client, settings.group_chat_id, settings.group_target)
+    resolved_group_target = await _resolve_group_target(first_client, settings.group_chat_id, settings.group_target)
+    group_target = resolved_group_target or settings.group_target or settings.group_chat_id
+    if group_target is None:
+        raise ValueError("Swarm mode requires GROUP_CHAT_ID or GROUP_TARGET")
+
+    orchestrator = SwarmOrchestrator(
+        bot_profiles=bot_profiles,
+        manager=manager,
+        topic_selector=runtime.topic_selector,
+        prompt_composer=runtime.prompt_composer,
+        gemini_client=runtime.gemini_client,
+        history=runtime.history,
+        exchange_store=runtime.exchange_store,
+        group_target=group_target,
+        group_chat_id=settings.group_chat_id,
+        max_turns_per_exchange=settings.swarm_max_turns_per_exchange,
+        pair_cooldown_slots=settings.swarm_pair_cooldown_slots,
+        active_windows_utc=settings.swarm_schedule_active_windows_utc,
+        initiator_offset_minutes=settings.swarm_initiator_offset_minutes,
+        responder_delay_minutes=settings.swarm_responder_delay_minutes,
+        skip_if_recent_human_activity=settings.swarm_skip_if_recent_human_activity,
+        resolve_group_target=lambda telegram_client: _resolve_group_target(
             telegram_client,
             settings.group_chat_id,
             settings.group_target,
-        )
+        ),
+    )
+    scheduler.add_job(
+        orchestrator.run_once,
+        "interval",
+        seconds=settings.swarm_tick_seconds,
+        max_instances=1,
+        coalesce=True,
+    )
+    logger.info("SwarmOrchestrator зарегистрирован: tick_seconds=%s", settings.swarm_tick_seconds)
 
-    reply_guard_worker: ReplyGuardWorker | None = None
-    reply_guard_task: asyncio.Task[None] | None = None
-    if settings.reply_guard_enabled:
-        if telegram_client is None:
-            logger.warning("reply_guard: запуск пропущен — Telegram-клиент отсутствует")
-        else:
-            try:
-                from telethon import events
-            except ImportError:
-                logger.warning("reply_guard: handler не зарегистрирован — telethon не установлен")
-            else:
-                me = await telegram_client.get_me()
-                bot_user_id = getattr(me, "id", None)
-                if not isinstance(bot_user_id, int):
-                    logger.warning("reply_guard: handler не зарегистрирован — не удалось определить me.id")
-                else:
-                    reply_guard_chat_target = await _resolve_group_target(
-                        telegram_client,
-                        settings.group_chat_id,
-                        settings.group_target,
-                    )
-                    allowed_chat_ids = _iter_candidate_chat_ids(settings.group_chat_id) if settings.group_chat_id else set()
-                    event_chats_filter = reply_guard_chat_target or settings.group_chat_id or settings.group_target
-                    if event_chats_filter is None:
-                        logger.warning("reply_guard: handler не зарегистрирован — целевая группа не задана")
-                    else:
-                        reply_guard_queue = ReplyGuardQueue(settings.db_path)
-                        await reply_guard_queue.init_db()
-                        classifier_gemini = GeminiClient(
-                            settings.gemini_api_key,
-                            model_name=settings.reply_guard_classifier_model,
-                            proxy_url=settings.proxy_url,
-                            fallback_model_name=settings.gemini_fallback_model,
-                            max_retries=settings.gemini_max_retries,
-                            retry_backoff_seconds=settings.gemini_retry_backoff_seconds,
-                            retry_jitter_seconds=settings.gemini_retry_jitter_seconds,
-                            request_timeout_seconds=settings.gemini_request_timeout_seconds,
-                            temperature=settings.reply_guard_classifier_temperature,
-                        )
-                        classifier = ReplyGuardClassifier(
-                            prompt_loader=prompt_loader,
-                            gemini_client=classifier_gemini,
-                            prompt_path=settings.reply_guard_classifier_prompt_path,
-                        )
-                        reply_guard_worker = ReplyGuardWorker(
-                            queue=reply_guard_queue,
-                            client=telegram_client,
-                            classifier=classifier,
-                            prompt_loader=prompt_loader,
-                            gemini_client=gemini_client,
-                            refusal_text=settings.reply_guard_refusal_text,
-                            poll_interval_seconds=settings.reply_guard_worker_poll_interval_seconds,
-                            max_input_chars=settings.reply_guard_max_input_chars,
-                            max_attempts=settings.reply_guard_max_attempts,
-                            retry_backoff_seconds=settings.reply_guard_retry_backoff_seconds,
-                            system_prompt_path=settings.reply_guard_system_prompt_path,
-                        )
-                        reply_guard_task = asyncio.create_task(reply_guard_worker.run())
-                        telegram_client.add_event_handler(
-                            build_reply_guard_handler(
-                                reply_guard_queue,
-                                bot_user_id,
-                                allowed_chat_ids=allowed_chat_ids,
-                            ),
-                            events.NewMessage(chats=event_chats_filter),
-                        )
-                        logger.info("reply_guard: handler и воркер зарегистрированы")
+    supervise_tasks = [asyncio.create_task(manager.supervise_bot(bot_id)) for bot_id in manager.active_bot_ids]
+    try:
+        await asyncio.gather(*supervise_tasks)
+    finally:
+        for task in supervise_tasks:
+            task.cancel()
+        await asyncio.gather(*supervise_tasks, return_exceptions=True)
+        await manager.stop()
 
+
+async def main() -> None:
+    """Инициализирует и запускает swarm userbot."""
+    settings = load_settings_or_exit()
+    setup_logging(settings.log_level)
+    logger.info("Запуск swarm userbot")
+    if settings.mode != "swarm":
+        raise ValueError("Поддерживается только mode=swarm")
+
+    runtime = await _build_runtime_context(settings)
     scheduler = AsyncIOScheduler()
-
-    if settings.mode == "legacy_session" and settings.scheduler_enabled:
-        async def _session_expiry_job() -> None:
-            """Проверяет истечение активной сессии разговора — запускается каждую минуту."""
-            conversation_session.is_active()
-
-        async def _silence_check_job() -> None:
-            """Инициирует разговор после тишины — запускается каждые 5 минут."""
-            logger.info(
-                "Запуск проверки тишины: session_active=%s, silence_timeout_minutes=%s, group_chat_id=%s, group_target=%s",
-                conversation_session.is_active(),
-                settings.silence_timeout_minutes,
-                settings.group_chat_id,
-                settings.group_target,
-            )
-            if conversation_session.is_active():
-                logger.info("Проверка тишины завершена без старта темы: активная сессия уже запущена")
-                return
-            if is_dnd_active_utc(settings.dnd_hours_utc, _utc_now()):
-                logger.info("Проверка тишины пропущена: активен режим не беспокоить")
-                return
-            logger.info("Проверка тишины: синхронизация последней активности группы")
-            await _sync_group_activity(
-                telegram_client,
-                settings.group_chat_id,
-                settings.group_target,
-                silence_watcher,
-            )
-            if not silence_watcher.is_silence_exceeded(settings.silence_timeout_minutes):
-                logger.info("Проверка тишины завершена без старта темы: порог тишины ещё не достигнут")
-                return
-            if settings.group_chat_id is None and not settings.group_target:
-                logger.warning("Невозможно начать разговор: GROUP_CHAT_ID и GROUP_TARGET не заданы в настройках")
-                return
-            if telegram_client is None:
-                logger.warning("Невозможно начать разговор: Telegram-клиент отсутствует")
-                return
-            logger.info("Проверка тишины: резолв целевой группы для автозапуска темы")
-            resolved_group_target = await _resolve_group_target(
-                telegram_client,
-                settings.group_chat_id,
-                settings.group_target,
-            )
-            if resolved_group_target is None:
-                logger.warning(
-                    "Невозможно начать разговор: не удалось резолвить target группы. "
-                    "Проверьте доступ аккаунта к чату и настройку GROUP_TARGET."
-                )
-                return
-            try:
-                topic = await topic_selector.pick_random()
-                system_prompt = await prompt_loader.load("system")
-                start_topic_prompt = await prompt_loader.load("start_topic")
-                logger.info("Проверка тишины: запуск Gemini для автозапуска темы '%s'", topic)
-                message = await asyncio.wait_for(
-                    gemini_client.start_topic(
-                        system_prompt=f"{system_prompt}\n\n{start_topic_prompt}",
-                        topic=topic,
-                    ),
-                    timeout=settings.gemini_request_timeout_seconds,
-                )
-                logger.info("Проверка тишины: отправка стартового сообщения в Telegram")
-                await telegram_client.send_message(resolved_group_target, message)
-                conversation_session.start(topic)
-                silence_watcher.update_last_activity()
-                logger.info("Разговор на тему '%s' инициирован после тишины", topic)
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "Таймаут при инициации разговора по расписанию: Gemini не ответил за %.1f сек",
-                    settings.gemini_request_timeout_seconds,
-                )
-            except asyncio.CancelledError:
-                logger.info("Проверка тишины отменена штатной остановкой приложения")
-                raise
-            except Exception:
-                logger.exception("Ошибка при инициации разговора по расписанию")
-
-        scheduler.add_job(_session_expiry_job, "interval", minutes=1)
-        scheduler.add_job(
-            _silence_check_job,
-            "interval",
-            minutes=settings.silence_check_interval_minutes,
-            max_instances=1,
-            coalesce=True,
-        )
-        logger.info(
-            "Планировщик активен: проверка тишины каждые %s мин, порог тишины %s мин, сессия до %s мин",
-            settings.silence_check_interval_minutes,
-            settings.silence_timeout_minutes,
-            settings.session_duration_minutes,
-        )
-    elif settings.mode == "legacy_session":
-        logger.info("Режим расписания отключён (SCHEDULER_ENABLED=false)")
-    elif settings.mode == "windowed_qa":
-        window_schedule = WindowSchedule(
-            morning_window_utc=settings.window_morning_utc,
-            evening_window_utc=settings.window_evening_utc,
-            initiator_offset_minutes=settings.initiator_offset_minutes,
-        )
-        exchange_tracker = ExchangeTracker(settings.max_exchanges_per_window)
-        if settings.bot_role == "initiator":
-            scheduler.add_job(
-                initiator_job,
-                "interval",
-                minutes=1,
-                max_instances=1,
-                coalesce=True,
-                kwargs={
-                    "settings": settings,
-                    "client": telegram_client,
-                    "gemini": gemini_client,
-                    "topics": topic_selector,
-                    "history": history,
-                    "prompt_loader": prompt_loader,
-                    "schedule": window_schedule,
-                    "tracker": exchange_tracker,
-                },
-            )
-            logger.info("windowed_qa: зарегистрирована задача initiator")
-        elif settings.bot_role == "responder":
-            if telegram_client is None:
-                logger.warning("windowed_qa: responder handler не зарегистрирован — Telegram-клиент отсутствует")
-            else:
-                try:
-                    from telethon import events
-                except ImportError:
-                    logger.warning("windowed_qa: responder handler не зарегистрирован — telethon не установлен")
-                else:
-                    handler = build_responder_handler(
-                        settings=settings,
-                        client=telegram_client,
-                        gemini=gemini_client,
-                        history=history,
-                        prompt_loader=prompt_loader,
-                        whitelist=whitelist,
-                        schedule=window_schedule,
-                        tracker=exchange_tracker,
-                    )
-                    telegram_client.add_event_handler(handler, events.NewMessage())
-                    logger.info("windowed_qa: зарегистрирован responder handler")
-        else:
-            raise ValueError(f"Неизвестная роль windowed_qa: {settings.bot_role}")
-    else:
-        raise ValueError(f"Неизвестный режим работы: {settings.mode}")
-
     scheduler.start()
     logger.info("Планировщик запущен")
-
     try:
-        if settings.mode == "legacy_session":
-            await _register_handlers(userbot_client, whitelist)
-        if telegram_client is not None:
-            logger.info("Переход в режим ожидания сообщений Telegram")
-            try:
-                await telegram_client.run_until_disconnected()
-            except asyncio.CancelledError:
-                logger.info("Ожидание сообщений Telegram прервано штатной остановкой приложения")
-        else:
-            logger.warning("Запуск ожидания сообщений пропущен: Telegram-клиент отсутствует")
+        await _run_swarm_mode(settings, runtime, scheduler)
     finally:
-        if reply_guard_worker is not None:
-            logger.info("Остановка reply_guard воркера")
-            reply_guard_worker.stop()
-        if reply_guard_task is not None:
-            reply_guard_task.cancel()
-            try:
-                await reply_guard_task
-            except asyncio.CancelledError:
-                logger.info("reply_guard воркер остановлен")
         shutdown = getattr(scheduler, "shutdown", None)
         if callable(shutdown):
-            logger.info("Остановка планировщика")
             result = shutdown(wait=False)
             if inspect.isawaitable(result):
                 await result
-        logger.info("Остановка Telegram-клиента")
-        await userbot_client.stop()
-        close_history = getattr(history, "close", None)
-        if callable(close_history):
-            logger.info("Закрытие хранилища истории сообщений")
-            await close_history()
-        logger.info("Приложение остановлено")
+        await runtime.close()
+        logger.info("Swarm userbot остановлен")
 
 
 if __name__ == "__main__":
