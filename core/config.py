@@ -56,7 +56,6 @@ def _normalize_optional_chat_id(v: object) -> object:
 OptionalChatId = Annotated[int | None, BeforeValidator(_normalize_optional_chat_id)]
 OptionalStr = Annotated[str | None, BeforeValidator(_normalize_optional_str)]
 RequiredStr = Annotated[str, BeforeValidator(_require_non_empty_str)]
-HourWindow = tuple[int, int]
 MinuteRange = tuple[int, int]
 
 
@@ -85,48 +84,33 @@ class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ModeConfig(_StrictModel):
-    """Выбранный режим работы инстанса."""
-
-    active: Literal["legacy_session", "windowed_qa", "swarm"] = "legacy_session"
-
-
 class AppModeConfig(_StrictModel):
-    """Новая секция режима приложения."""
+    """Секция режима приложения."""
 
-    mode: Literal["legacy_session", "windowed_qa", "swarm"] = "legacy_session"
-
-
-class BotConfig(_StrictModel):
-    """Роль инстанса в windowed_qa."""
-
-    role: Literal["initiator", "responder"] = "initiator"
+    mode: Literal["swarm"] = "swarm"
 
 
 class PathsConfig(_StrictModel):
-    """Пути к локальным ресурсам проекта."""
+    """Пути к локальным ресурсам проекта, не покрытым профильными секциями."""
 
-    db_path: str = "data/history.db"
-    topics_path: str = "ai/prompts/topics.md"
     reply_rules_path: str = "ai/prompts/reply_rules.md"
-    prompts_dir: str = "ai/prompts"
 
 
 class StorageConfig(_StrictModel):
-    """Новая секция путей к хранилищу."""
+    """Пути к хранилищу."""
 
     db_path: str = "data/history.db"
 
 
 class TargetConfig(_StrictModel):
-    """Новая секция целевой группы."""
+    """Целевая Telegram-группа для swarm."""
 
     group_chat_id: int | None = None
     group_target: OptionalStr = None
 
 
 class PromptsConfig(_StrictModel):
-    """Новая секция путей к промтам."""
+    """Пути к промтам и профилям ботов."""
 
     base_dir: str = "ai/prompts"
     topics_path: str = "ai/prompts/topics.md"
@@ -155,87 +139,6 @@ class LoggingConfig(_StrictModel):
     """Параметры логирования."""
 
     level: str = "INFO"
-
-
-class LegacySessionConfig(_StrictModel):
-    """Параметры старого режима 30-минутных сессий."""
-
-    scheduler_enabled: bool = True
-    silence_check_interval_minutes: int = Field(default=5, ge=1)
-    silence_timeout_minutes: int = Field(default=60, ge=0)
-    session_duration_minutes: int = Field(default=30, ge=1)
-    dnd_hours_utc: OptionalStr = None
-
-    @field_validator("dnd_hours_utc", mode="before")
-    @classmethod
-    def validate_dnd_hours_utc(cls, value: object) -> object:
-        """Проверяет формат UTC-интервала режима не беспокоить."""
-        value = _normalize_optional_str(value)
-        if value is None:
-            return None
-        if not isinstance(value, str):
-            return value
-
-        parts = value.split("-", maxsplit=1)
-        if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
-            raise PydanticCustomError(
-                "invalid_dnd_hours_utc",
-                "dnd_hours_utc должен быть в формате HH-HH",
-            )
-
-        start_hour = int(parts[0])
-        end_hour = int(parts[1])
-        if not (0 <= start_hour <= 23 and 0 <= end_hour <= 23):
-            raise PydanticCustomError(
-                "invalid_dnd_hours_utc",
-                "Часы в dnd_hours_utc должны быть в диапазоне 0..23",
-            )
-
-        return f"{start_hour}-{end_hour}"
-
-
-class WindowedQAConfig(_StrictModel):
-    """Параметры режима одного вопроса и одного ответа в UTC-окнах."""
-
-    morning_window_utc: HourWindow = (10, 11)
-    evening_window_utc: HourWindow = (16, 18)
-    initiator_offset_minutes: MinuteRange = (0, 30)
-    responder_delay_minutes: MinuteRange = (8, 12)
-    max_exchanges_per_window: int = Field(default=1, ge=1)
-
-    @field_validator("morning_window_utc", "evening_window_utc", mode="before")
-    @classmethod
-    def validate_hour_window(cls, value: object) -> object:
-        """Проверяет пару часов UTC, включая окна через полночь."""
-        start, end = _read_pair(value, "Окно UTC")
-        if not (0 <= start <= 23 and 0 <= end <= 24 and start != end):
-            raise ValueError("Окно UTC должно удовлетворять 0 <= start <= 23, 0 <= end <= 24 и start != end")
-        return (start, end)
-
-    @field_validator("initiator_offset_minutes", "responder_delay_minutes", mode="before")
-    @classmethod
-    def validate_minute_range(cls, value: object) -> object:
-        """Проверяет диапазон минут [min, max]."""
-        start, end = _read_pair(value, "Диапазон минут")
-        if start < 0 or end < start:
-            raise ValueError("Диапазон минут должен удовлетворять 0 <= min <= max")
-        return (start, end)
-
-
-class ReplyGuardConfig(_StrictModel):
-    """Параметры изолированного reply_guard."""
-
-    enabled: bool = False
-    city: str = "Нячанг"
-    refusal_text: str = "Кажется, это чуть не по теме. Уточните, пожалуйста, вопрос про Нячанг."
-    classifier_model: str = "gemini-3-flash-preview"
-    classifier_temperature: float = Field(default=0.1, ge=0.0, le=2.0)
-    max_input_chars: int = Field(default=500, ge=1)
-    worker_poll_interval_seconds: float = Field(default=0.5, gt=0.0)
-    max_attempts: int = Field(default=3, ge=1)
-    retry_backoff_seconds: list[float] = Field(default_factory=lambda: [2.0, 8.0, 30.0])
-    system_prompt_path: str = "ai/prompts/reply_guard/system.md"
-    classifier_prompt_path: str = "ai/prompts/reply_guard/classifier.md"
 
 
 class SwarmBotConfig(_StrictModel):
@@ -333,8 +236,6 @@ class AppConfig(_StrictModel):
     """Полная несекретная TOML-конфигурация."""
 
     app: AppModeConfig = Field(default_factory=AppModeConfig)
-    mode: ModeConfig = Field(default_factory=ModeConfig)
-    bot: BotConfig = Field(default_factory=BotConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     target: TargetConfig = Field(default_factory=TargetConfig)
@@ -342,9 +243,6 @@ class AppConfig(_StrictModel):
     gemini: GeminiConfig = Field(default_factory=GeminiConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
-    legacy_session: LegacySessionConfig = Field(default_factory=LegacySessionConfig)
-    windowed_qa: WindowedQAConfig = Field(default_factory=WindowedQAConfig)
-    reply_guard: ReplyGuardConfig = Field(default_factory=ReplyGuardConfig)
     swarm: SwarmConfig = Field(default_factory=SwarmConfig)
 
 
@@ -424,14 +322,13 @@ class Settings:
             setattr(self, key, value)
 
     def _apply_app_config(self, config: AppConfig) -> None:
-        """Пробрасывает секции TOML в совместимые публичные поля Settings."""
-        self.mode = config.app.mode if "app" in config.model_fields_set else config.mode.active
-        self.bot_role = config.bot.role
+        """Пробрасывает секции TOML в публичные поля Settings."""
+        self.mode = config.app.mode
 
-        self.db_path = config.storage.db_path if "storage" in config.model_fields_set else config.paths.db_path
-        self.topics_path = config.prompts.topics_path if "prompts" in config.model_fields_set else config.paths.topics_path
+        self.db_path = config.storage.db_path
+        self.topics_path = config.prompts.topics_path
         self.reply_rules_path = config.paths.reply_rules_path
-        self.prompts_dir = config.prompts.base_dir if "prompts" in config.model_fields_set else config.paths.prompts_dir
+        self.prompts_dir = config.prompts.base_dir
         self.bot_profiles_dir = config.prompts.bot_profiles_dir
         if self.group_chat_id is None and config.target.group_chat_id is not None:
             self.group_chat_id = config.target.group_chat_id
@@ -450,30 +347,6 @@ class Settings:
 
         self.log_level = config.logging.level
 
-        self.scheduler_enabled = config.legacy_session.scheduler_enabled
-        self.silence_check_interval_minutes = config.legacy_session.silence_check_interval_minutes
-        self.silence_timeout_minutes = config.legacy_session.silence_timeout_minutes
-        self.session_duration_minutes = config.legacy_session.session_duration_minutes
-        self.dnd_hours_utc = config.legacy_session.dnd_hours_utc
-
-        self.window_morning_utc = config.windowed_qa.morning_window_utc
-        self.window_evening_utc = config.windowed_qa.evening_window_utc
-        self.initiator_offset_minutes = config.windowed_qa.initiator_offset_minutes
-        self.responder_delay_minutes = config.windowed_qa.responder_delay_minutes
-        self.max_exchanges_per_window = config.windowed_qa.max_exchanges_per_window
-
-        self.reply_guard_enabled = config.reply_guard.enabled
-        self.reply_guard_city = config.reply_guard.city
-        self.reply_guard_refusal_text = config.reply_guard.refusal_text
-        self.reply_guard_classifier_model = config.reply_guard.classifier_model
-        self.reply_guard_classifier_temperature = config.reply_guard.classifier_temperature
-        self.reply_guard_max_input_chars = config.reply_guard.max_input_chars
-        self.reply_guard_worker_poll_interval_seconds = config.reply_guard.worker_poll_interval_seconds
-        self.reply_guard_max_attempts = config.reply_guard.max_attempts
-        self.reply_guard_retry_backoff_seconds = config.reply_guard.retry_backoff_seconds
-        self.reply_guard_system_prompt_path = config.reply_guard.system_prompt_path
-        self.reply_guard_classifier_prompt_path = config.reply_guard.classifier_prompt_path
-
         self.swarm_enabled = config.swarm.enabled or self.mode == "swarm"
         self.swarm_max_parallel_bots = config.swarm.max_parallel_bots
         self.swarm_ignore_messages_from_swarm = config.swarm.ignore_messages_from_swarm
@@ -490,8 +363,6 @@ class Settings:
         self.swarm_bot_ids = [bot.id for bot in self.swarm_bots]
 
         if self.mode == "swarm":
-            if not self.swarm_bots:
-                raise ValueError("swarm mode requires at least one enabled or configured bot")
             self.whitelist_user_ids = ""
 
     def _resolve_swarm_bots(self, bots: list[SwarmBotConfig]) -> list[SwarmBotRuntimeConfig]:

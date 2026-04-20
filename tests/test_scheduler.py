@@ -1,4 +1,4 @@
-"""Тесты для планировщика и логики сессий разговора."""
+"""Тесты для утилит планировщика swarm-режима."""
 
 import os
 import tempfile
@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from userbot.scheduler import ConversationSession, TopicSelector, is_dnd_active_utc, is_within_windows_utc
+from userbot.scheduler import TopicSelector, is_within_windows_utc
 
 
 async def test_topic_selector_returns_topic_from_list():
@@ -76,96 +76,6 @@ async def test_topic_selector_ignores_comment_lines():
         os.unlink(tmp_path)
 
 
-def test_session_not_active_by_default():
-    """Проверяет, что новая сессия неактивна."""
-    session = ConversationSession(duration_minutes=30)
-    assert session.is_active() is False
-
-
-def test_session_active_after_start():
-    """Проверяет, что сессия становится активной после вызова start()."""
-    session = ConversationSession(duration_minutes=30)
-    session.start(topic="Любимые фильмы")
-    assert session.is_active() is True
-    assert session._start_time is not None
-    assert session._start_time.tzinfo == UTC
-
-
-def test_session_stores_current_topic():
-    """Проверяет, что сессия хранит текущую тему после запуска."""
-    session = ConversationSession(duration_minutes=30)
-    session.start(topic="Планы на выходные")
-    assert session.current_topic == "Планы на выходные"
-
-
-def test_session_has_correct_duration():
-    """Проверяет, что длительность сессии задаётся корректно."""
-    session = ConversationSession(duration_minutes=30)
-    assert session.duration_minutes == 30
-
-
-def test_session_inactive_after_stop():
-    """Проверяет, что сессия становится неактивной после вызова stop()."""
-    session = ConversationSession(duration_minutes=30)
-    session.start(topic="Тема")
-    session.stop()
-    assert session.is_active() is False
-
-
-def test_remaining_minutes_returns_none_before_start():
-    """Проверяет, что remaining_minutes возвращает None до запуска сессии."""
-    session = ConversationSession(duration_minutes=30)
-    assert session.remaining_minutes() is None
-
-
-def test_remaining_minutes_returns_none_after_stop():
-    """Проверяет, что remaining_minutes возвращает None после остановки сессии."""
-    session = ConversationSession(duration_minutes=30)
-    session.start(topic="Тема")
-    session.stop()
-    assert session.remaining_minutes() is None
-
-
-def test_remaining_minutes_returns_value_after_start():
-    """Проверяет, что remaining_minutes возвращает неотрицательное число сразу после запуска."""
-    session = ConversationSession(duration_minutes=10)
-    session.start(topic="Тема")
-    remaining = session.remaining_minutes()
-    assert remaining is not None
-    assert 0 <= remaining <= 10
-
-
-def test_remaining_minutes_returns_zero_when_expired():
-    """Проверяет, что remaining_minutes возвращает 0 для просроченной сессии."""
-    from datetime import timedelta
-
-    session = ConversationSession(duration_minutes=1)
-    session.start(topic="Тема")
-    # Сдвигаем время старта в прошлое на 2 минуты
-    session._start_time = session._start_time - timedelta(minutes=2)
-    remaining = session.remaining_minutes()
-    assert remaining == 0
-
-
-def test_is_dnd_active_utc_for_same_day_interval():
-    """Проверяет UTC-интервал DND внутри одних суток."""
-    assert is_dnd_active_utc("8-12", datetime(2026, 4, 10, 9, 0, tzinfo=UTC)) is True
-    assert is_dnd_active_utc("8-12", datetime(2026, 4, 10, 13, 0, tzinfo=UTC)) is False
-
-
-def test_is_dnd_active_utc_for_interval_across_midnight():
-    """Проверяет UTC-интервал DND с переходом через полночь."""
-    assert is_dnd_active_utc("23-7", datetime(2026, 4, 10, 23, 30, tzinfo=UTC)) is True
-    assert is_dnd_active_utc("23-7", datetime(2026, 4, 10, 6, 30, tzinfo=UTC)) is True
-    assert is_dnd_active_utc("23-7", datetime(2026, 4, 10, 12, 0, tzinfo=UTC)) is False
-
-
-def test_is_dnd_active_utc_for_full_day_interval():
-    """Проверяет, что одинаковые часы означают круглосуточный DND."""
-    assert is_dnd_active_utc("5-5", datetime(2026, 4, 10, 1, 0, tzinfo=UTC)) is True
-    assert is_dnd_active_utc("5-5", datetime(2026, 4, 10, 18, 0, tzinfo=UTC)) is True
-
-
 def test_is_within_windows_utc_matches_simple_window():
     """Проверяет попадание времени в одно из UTC-окон."""
     assert is_within_windows_utc(["10-12", "16-18"], datetime(2026, 4, 10, 11, 0, tzinfo=UTC)) is True
@@ -176,3 +86,13 @@ def test_is_within_windows_utc_supports_midnight_crossing_window():
     """Проверяет UTC-окно, которое пересекает полночь."""
     assert is_within_windows_utc(["23-3"], datetime(2026, 4, 10, 1, 0, tzinfo=UTC)) is True
     assert is_within_windows_utc(["23-3"], datetime(2026, 4, 10, 12, 0, tzinfo=UTC)) is False
+
+
+def test_is_within_windows_utc_empty_list_is_always_open():
+    """Проверяет, что пустой список окон трактуется как круглосуточно активный."""
+    assert is_within_windows_utc([], datetime(2026, 4, 10, 12, 0, tzinfo=UTC)) is True
+
+
+def test_is_within_windows_utc_same_start_and_end_is_always_open():
+    """Проверяет, что окно с одинаковыми start/end трактуется как круглосуточное."""
+    assert is_within_windows_utc(["5-5"], datetime(2026, 4, 10, 1, 0, tzinfo=UTC)) is True
