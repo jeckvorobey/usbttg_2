@@ -35,6 +35,29 @@ def is_dnd_active_utc(dnd_hours_utc: str | None, now_utc: datetime | None = None
     return current_hour >= start_hour or current_hour < end_hour
 
 
+def is_within_windows_utc(active_windows_utc: list[str], now_utc: datetime | None = None) -> bool:
+    """Проверяет, попадает ли текущее UTC-время хотя бы в одно активное окно."""
+    if not active_windows_utc:
+        return True
+
+    current_time = now_utc or datetime.now(UTC)
+    current_hour = current_time.hour
+
+    for window in active_windows_utc:
+        start_hour_str, end_hour_str = window.split("-", maxsplit=1)
+        start_hour = int(start_hour_str)
+        end_hour = int(end_hour_str)
+
+        if start_hour == end_hour:
+            return True
+        if start_hour < end_hour and start_hour <= current_hour < end_hour:
+            return True
+        if start_hour > end_hour and (current_hour >= start_hour or current_hour < end_hour):
+            return True
+
+    return False
+
+
 class TopicSelector:
     """Выбирает случайную тему для разговора из файла тем."""
 

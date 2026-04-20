@@ -171,3 +171,54 @@ async def test_get_session_history_returns_empty_for_none_chat_id(history):
 async def test_init_db_is_idempotent(history):
     """Проверяет, что повторный вызов init_db не вызывает ошибку (включая миграцию)."""
     await history.init_db()  # вызов второй раз не должен упасть
+
+
+async def test_save_message_persists_swarm_metadata(history):
+    """Проверяет сохранение bot_id, exchange_id, origin и reply_to_message_id."""
+    await history.save_message(
+        user_id=7,
+        role="assistant",
+        text="Ответ swarm-бота",
+        chat_id=-100777,
+        bot_id="anna",
+        exchange_id="exchange-1",
+        message_origin="scheduled_responder",
+        reply_to_message_id=12345,
+    )
+
+    messages = await history.get_session_history(chat_id=-100777)
+
+    assert messages == [
+        {
+            "role": "assistant",
+            "text": "Ответ swarm-бота",
+            "bot_id": "anna",
+            "exchange_id": "exchange-1",
+            "message_origin": "scheduled_responder",
+            "reply_to_message_id": 12345,
+        }
+    ]
+
+
+async def test_get_session_history_can_filter_by_bot_id(history):
+    """Проверяет фильтрацию истории сессии по конкретному bot_id."""
+    await history.save_message(
+        user_id=1,
+        role="assistant",
+        text="Ответ Анны",
+        chat_id=-100555,
+        bot_id="anna",
+        message_origin="human_reply",
+    )
+    await history.save_message(
+        user_id=2,
+        role="assistant",
+        text="Ответ Майка",
+        chat_id=-100555,
+        bot_id="mike",
+        message_origin="human_reply",
+    )
+
+    messages = await history.get_session_history(chat_id=-100555, bot_id="anna")
+
+    assert [item["text"] for item in messages] == ["Ответ Анны"]

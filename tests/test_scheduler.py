@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from userbot.scheduler import ConversationSession, TopicSelector, is_dnd_active_utc
+from userbot.scheduler import ConversationSession, TopicSelector, is_dnd_active_utc, is_within_windows_utc
 
 
 async def test_topic_selector_returns_topic_from_list():
@@ -164,3 +164,15 @@ def test_is_dnd_active_utc_for_full_day_interval():
     """Проверяет, что одинаковые часы означают круглосуточный DND."""
     assert is_dnd_active_utc("5-5", datetime(2026, 4, 10, 1, 0, tzinfo=UTC)) is True
     assert is_dnd_active_utc("5-5", datetime(2026, 4, 10, 18, 0, tzinfo=UTC)) is True
+
+
+def test_is_within_windows_utc_matches_simple_window():
+    """Проверяет попадание времени в одно из UTC-окон."""
+    assert is_within_windows_utc(["10-12", "16-18"], datetime(2026, 4, 10, 11, 0, tzinfo=UTC)) is True
+    assert is_within_windows_utc(["10-12", "16-18"], datetime(2026, 4, 10, 14, 0, tzinfo=UTC)) is False
+
+
+def test_is_within_windows_utc_supports_midnight_crossing_window():
+    """Проверяет UTC-окно, которое пересекает полночь."""
+    assert is_within_windows_utc(["23-3"], datetime(2026, 4, 10, 1, 0, tzinfo=UTC)) is True
+    assert is_within_windows_utc(["23-3"], datetime(2026, 4, 10, 12, 0, tzinfo=UTC)) is False

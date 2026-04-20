@@ -233,6 +233,47 @@ def test_settings_rejects_group_target_in_toml(tmp_path):
         Settings(**BASE_SECRETS, settings_path=str(settings_path))
 
 
+def test_settings_reads_target_section_from_toml(tmp_path):
+    """Проверяет чтение целевой группы из новой секции [target]."""
+    settings_path = write_settings(
+        tmp_path,
+        """
+        [app]
+        mode = "swarm"
+
+        [target]
+        group_chat_id = -100987654321
+        group_target = "@swarm_group"
+
+        [[swarm.bots]]
+        id = "anna"
+        session_env = "SESSION_STRING_ANNA"
+        persona_file = "anna.md"
+
+        [[swarm.bots]]
+        id = "mike"
+        session_env = "SESSION_STRING_MIKE"
+        persona_file = "mike.md"
+        """,
+    )
+
+    env = {
+        "API_ID": "12345678",
+        "API_HASH": "test_hash",
+        "GEMINI_API_KEY": "test_key",
+        "SESSION_STRING": "legacy-session",
+        "SESSION_STRING_ANNA": "anna-session",
+        "SESSION_STRING_MIKE": "mike-session",
+        "SETTINGS_PATH": str(settings_path),
+    }
+
+    with patch.dict("os.environ", env, clear=True):
+        settings = Settings(_env_file=None)
+
+    assert settings.group_chat_id == -100987654321
+    assert settings.group_target == "@swarm_group"
+
+
 def test_settings_rejects_missing_explicit_settings_path(tmp_path):
     """Проверяет ошибку при отсутствующем явно переданном TOML-файле."""
     missing_path = tmp_path / "missing-settings.toml"
@@ -277,3 +318,185 @@ def test_settings_rejects_missing_settings_path_from_env_file(tmp_path):
     with patch.dict("os.environ", {}, clear=True):
         with pytest.raises(FileNotFoundError, match="Файл настроек не найден"):
             Settings(_env_file=str(env_path))
+
+
+def test_settings_loads_swarm_mode_and_bots(tmp_path):
+    """Проверяет загрузку swarm-режима и списка ботов из TOML."""
+    settings_path = write_settings(
+        tmp_path,
+        """
+        [app]
+        mode = "swarm"
+
+        [storage]
+        db_path = ":memory:"
+
+        [prompts]
+        base_dir = "custom/prompts"
+        topics_path = "custom/topics.md"
+        bot_profiles_dir = "custom/bots"
+
+        [swarm]
+        enabled = true
+        max_parallel_bots = 12
+        ignore_messages_from_swarm = true
+        reply_only_to_addressed_bot = true
+
+        [swarm.schedule]
+        active_windows_utc = ["10-11", "16-18"]
+        initiator_offset_minutes = [0, 30]
+        responder_delay_minutes = [3, 10]
+        max_turns_per_exchange = 2
+        pair_cooldown_slots = 1
+
+        [swarm.orchestrator]
+        tick_seconds = 30
+        silence_timeout_minutes = 60
+        skip_if_recent_human_activity = true
+
+        [[swarm.bots]]
+        id = "anna"
+        session_env = "SESSION_STRING_ANNA"
+        persona_file = "anna.md"
+        enabled = true
+        temperature = 0.9
+
+        [[swarm.bots]]
+        id = "mike"
+        session_env = "SESSION_STRING_MIKE"
+        persona_file = "mike.md"
+        enabled = false
+        temperature = 0.8
+        """,
+    )
+
+    env = {
+        "API_ID": "12345678",
+        "API_HASH": "test_hash",
+        "GEMINI_API_KEY": "test_key",
+        "SESSION_STRING": "legacy-session",
+        "SESSION_STRING_ANNA": "anna-session",
+        "SESSION_STRING_MIKE": "mike-session",
+        "SETTINGS_PATH": str(settings_path),
+    }
+
+    with patch.dict("os.environ", env, clear=True):
+        settings = Settings(_env_file=None)
+
+    assert settings.mode == "swarm"
+    assert settings.db_path == ":memory:"
+    assert settings.prompts_dir == "custom/prompts"
+    assert settings.topics_path == "custom/topics.md"
+    assert settings.swarm_enabled is True
+    assert settings.swarm_max_parallel_bots == 12
+    assert settings.swarm_ignore_messages_from_swarm is True
+    assert settings.swarm_reply_only_to_addressed_bot is True
+    assert settings.swarm_schedule_active_windows_utc == ["10-11", "16-18"]
+    assert settings.swarm_initiator_offset_minutes == (0, 30)
+    assert settings.swarm_responder_delay_minutes == (3, 10)
+    assert settings.swarm_max_turns_per_exchange == 2
+    assert settings.swarm_pair_cooldown_slots == 1
+    assert settings.swarm_tick_seconds == 30
+    assert settings.swarm_silence_timeout_minutes == 60
+    assert settings.swarm_skip_if_recent_human_activity is True
+    assert settings.swarm_bot_ids == ["anna", "mike"]
+    assert settings.swarm_bots[0].session_string == "anna-session"
+    assert settings.swarm_bots[1].session_string == "mike-session"
+    assert settings.whitelist_user_ids == ""
+
+
+def test_settings_rejects_duplicate_swarm_bot_ids(tmp_path):
+    """Проверяет запрет дублирующихся bot.id в swarm-конфигурации."""
+    settings_path = write_settings(
+        tmp_path,
+        """
+        [app]
+        mode = "swarm"
+
+        [[swarm.bots]]
+        id = "anna"
+        session_env = "SESSION_STRING_ANNA"
+        persona_file = "anna.md"
+
+        [[swarm.bots]]
+        id = "anna"
+        session_env = "SESSION_STRING_ANNA_2"
+        persona_file = "anna-2.md"
+        """,
+    )
+
+    env = {
+        "API_ID": "12345678",
+        "API_HASH": "test_hash",
+        "GEMINI_API_KEY": "test_key",
+        "SESSION_STRING": "legacy-session",
+        "SESSION_STRING_ANNA": "anna-session",
+        "SESSION_STRING_ANNA_2": "anna-session-2",
+        "SETTINGS_PATH": str(settings_path),
+    }
+
+    with patch.dict("os.environ", env, clear=True):
+        with pytest.raises(Exception, match="bot id"):
+            Settings(_env_file=None)
+
+
+def test_settings_rejects_missing_swarm_session_env(tmp_path):
+    """Проверяет ошибку, если session_env бота не найден в окружении."""
+    settings_path = write_settings(
+        tmp_path,
+        """
+        [app]
+        mode = "swarm"
+
+        [[swarm.bots]]
+        id = "anna"
+        session_env = "SESSION_STRING_ANNA"
+        persona_file = "anna.md"
+        """,
+    )
+
+    env = {
+        "API_ID": "12345678",
+        "API_HASH": "test_hash",
+        "GEMINI_API_KEY": "test_key",
+        "SESSION_STRING": "legacy-session",
+        "SETTINGS_PATH": str(settings_path),
+    }
+
+    with patch.dict("os.environ", env, clear=True):
+        with pytest.raises(Exception, match="SESSION_STRING_ANNA"):
+            Settings(_env_file=None)
+
+
+def test_settings_ignores_whitelist_in_swarm_mode(tmp_path):
+    """Проверяет, что whitelist_user_ids отключается в swarm-режиме."""
+    settings_path = write_settings(
+        tmp_path,
+        """
+        [app]
+        mode = "swarm"
+
+        [telegram]
+        whitelist_user_ids = [111, 222]
+
+        [[swarm.bots]]
+        id = "anna"
+        session_env = "SESSION_STRING_ANNA"
+        persona_file = "anna.md"
+        """,
+    )
+
+    env = {
+        "API_ID": "12345678",
+        "API_HASH": "test_hash",
+        "GEMINI_API_KEY": "test_key",
+        "SESSION_STRING": "legacy-session",
+        "SESSION_STRING_ANNA": "anna-session",
+        "SETTINGS_PATH": str(settings_path),
+    }
+
+    with patch.dict("os.environ", env, clear=True):
+        settings = Settings(_env_file=None)
+
+    assert settings.mode == "swarm"
+    assert settings.whitelist_user_ids == ""

@@ -2,60 +2,66 @@
 
 ## Назначение проекта
 
-Telegram userbot на базе Telethon, который:
-- мониторит указанную группу и отвечает на сообщения пользователей из whitelist;
-- самостоятельно инициирует разговоры на случайные темы из файла сессиями по 30 минут;
-- использует Gemini AI для генерации естественных ответов;
-- хранит историю диалогов в SQLite для контекстных ответов.
+Telegram userbot на базе Telethon, который работает в режиме `swarm`:
+- в одном процессе запущено несколько userbot-аккаунтов;
+- каждый bot постоянно онлайн и слушает целевую группу;
+- если пользователь делает `reply` на сообщение конкретного bot, отвечает только этот bot;
+- orchestrator по расписанию запускает случайные `A -> B` обмены;
+- все сообщения сохраняются в SQLite;
+- persisted history используется для anti-repeat поведения, чтобы боты не задавали один и тот же вопрос каждый день;
+- в ключевых потоках есть подробное логирование.
 
 ## Технологии
 
-| Компонент    | Библиотека             | Назначение                          |
-|--------------|------------------------|-------------------------------------|
-| MTProto      | `telethon`             | Подключение к Telegram как юзер     |
-| AI           | `google-generativeai`  | Генерация ответов через Gemini API  |
-| Scheduler    | `apscheduler`          | Планирование разговоров             |
-| Database     | `aiosqlite`            | Асинхронное хранение истории        |
-| Config       | `pydantic-settings`    | Загрузка настроек из `.env`         |
-| Testing      | `pytest`, `pytest-asyncio` | TDD и асинхронные тесты         |
-| Python       | `3.11+`                | Целевая версия интерпретатора       |
+| Компонент | Библиотека | Назначение |
+|---|---|---|
+| MTProto | `telethon` | Подключение к Telegram как user |
+| AI | `google-generativeai` | Генерация ответов через Gemini |
+| Scheduler | `apscheduler` | Планирование orchestrator tick |
+| Database | `aiosqlite` | История сообщений и persisted state |
+| Config | `pydantic-settings` | Секреты из `.env`, несекретные настройки из TOML |
+| Testing | `pytest`, `pytest-asyncio` | TDD и async unit/integration tests |
+| Python | `3.11+` | Целевая версия |
 
 ## Архитектура
 
 ```text
-Корень проекта
-├── ai/               ← Всё связанное с ИИ
-│   ├── gemini.py     — Клиент Gemini API + загрузчик промтов из .md
-│   ├── history.py    — Хранение истории диалогов в SQLite
-│   └── prompts/      — Промты в формате .md, загружаются в runtime
-├── userbot/          ← Всё связанное с Telegram
-│   ├── client.py     — Инициализация Telethon клиента
-│   ├── handlers.py   — Обработчики сообщений, фильтр whitelist
-│   └── scheduler.py  — APScheduler задачи, логика 30-минутных сессий
-├── core/             ← Общие утилиты
-│   └── config.py     — Настройки через pydantic-settings
-├── data/             ← Данные и ресурсы
-│   ├── whitelist.md  — Список Telegram user_id, один на строку
-│   ├── topics.md     — Список тем для разговора
-├── tests/            ← Тесты
-└── run.py            ← Точка входа
+ai/
+  gemini.py
+  history.py
+  prompt_composer.py
+  prompts/
+core/
+  config.py
+  runtime_models.py
+userbot/
+  client.py
+  swarm_manager.py
+  reply_router.py
+  orchestrator.py
+  exchange_store.py
+  scheduler.py
+run.py
 ```
 
 ## Поток данных
 
 ```text
-Входящее сообщение
-  → userbot/handlers.py: проверка whitelist
-  → ai/history.py: загрузка истории
-  → ai/gemini.py: загрузка промта + генерация ответа
-  → ai/history.py: сохранение ответа
-  → отправка ответа
+Human reply в группе
+  → reply_router.py
+  → per-bot coordinator
+  → prompt_composer.py
+  → gemini.py
+  → history.py
+  → ответ адресованным bot
 
-Таймер APScheduler
-  → userbot/scheduler.py: выбор случайной темы из ai/prompts/topics.md
-  → ai/gemini.py: генерация начала разговора
-  → отправка сообщения в группу
-  → сессия активна 30 минут
+Scheduled tick
+  → orchestrator.py
+  → exchange_store.py (persisted anti-repeat state)
+  → prompt_composer.py
+  → gemini.py
+  → history.py
+  → A задаёт вопрос, B отвечает
 ```
 
 ## Правила разработки
@@ -65,45 +71,44 @@ Telegram userbot на базе Telethon, который:
 3. Не завязывай тесты на внешние сервисы:
    - Gemini API мокировать;
    - SQLite подменять на `":memory:"`;
-   - файловые зависимости тестировать через временные файлы.
+   - Telethon-клиенты подменять fake/stub-объектами.
 4. Для async-логики использовать только асинхронные интерфейсы.
-5. Комментарии и docstrings в проекте держать на русском языке.
-6. Не менять архитектурный слой без явной причины: Telegram-код остаётся в `userbot/`, AI-код в `ai/`, конфиг в `core/`.
+5. Комментарии и docstrings держать на русском языке.
+6. Не хардкодить промты в коде.
+7. Все новые ключевые ветки поведения должны сопровождаться логированием.
 
 ## Ограничения
 
 - `async` везде для БД и сетевых операций;
 - только `aiosqlite`, без синхронного SQLite API;
 - без FastAPI и HTTP-сервера;
-- только SQLite, без PostgreSQL, Redis и других СУБД;
-- промты не хардкодить, а загружать из `ai/prompts/*.md`;
-- whitelist читать из `data/whitelist.md`;
-- темы читать из `ai/prompts/topics.md`;
-- для входа использовать `SESSION_STRING` из `.env`;
-- `SESSION_STRING` не логировать и не коммитить.
+- только SQLite, без PostgreSQL и Redis;
+- persona загружать строго из `persona_file` в конфиге;
+- все сообщения сохранять в БД;
+- `SESSION_STRING_*` не логировать и не коммитить.
 
 ## Рабочие команды
 
-- Установка dev-зависимостей: `pip install -e .[dev]`
-- Запуск тестов: `pytest`
-- Проверка сбора тестов: `pytest --collect-only`
-- Локальный запуск: `python run.py`
+- Установка зависимостей: `uv sync`
+- Запуск тестов: `uv run pytest`
+- Проверка сбора тестов: `uv run pytest --collect-only`
+- Локальный запуск: `uv run python run.py`
 
 ## Важные пути
 
-| Путь                                | Описание                         |
-|-------------------------------------|----------------------------------|
-| `data/whitelist.md`                 | Telegram user_id для ответов     |
-| `ai/prompts/topics.md`                    | Темы для инициирования разговора |
-| `ai/prompts/system.md`              | Системный промт для Gemini       |
-| `ai/prompts/reply.md`               | Промт для генерации ответа       |
-| `ai/prompts/start_topic.md`         | Промт для начала разговора       |
-| `.env`                              | Секреты, не коммитить            |
-| `.env.example`                      | Шаблон переменных окружения      |
+| Путь | Описание |
+|---|---|
+| `config/settings.example.toml` | Пример swarm-конфигурации |
+| `ai/prompts/topics.md` | Темы для scheduled exchange |
+| `ai/prompts/system.md` | Базовый системный промт |
+| `ai/prompts/reply.md` | Базовый промт ответа |
+| `ai/prompts/start_topic.md` | Базовый промт старта темы |
+| `ai/prompts/bots/` | Persona-файлы ботов |
+| `.env.example` | Шаблон секретов |
 
 ## Ожидания от Codex
 
 - Перед правками сверяй описание выше с реальной структурой проекта.
 - При изменении поведения сначала обновляй или добавляй тесты, затем код.
-- Не трогай пользовательские данные и не раскрывай `SESSION_STRING`.
+- Не трогай пользовательские данные и не раскрывай `SESSION_STRING_*`.
 - В финальном отчёте указывай, что изменено и чем это проверено.

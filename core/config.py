@@ -72,7 +72,7 @@ class Secrets(BaseSettings):
     api_id: int
     api_hash: str
     gemini_api_key: str
-    session_string: RequiredStr
+    session_string: OptionalStr = None
     proxy_url: OptionalStr = None
     group_chat_id: OptionalChatId = None
     group_target: OptionalStr = None
@@ -88,7 +88,13 @@ class _StrictModel(BaseModel):
 class ModeConfig(_StrictModel):
     """Выбранный режим работы инстанса."""
 
-    active: Literal["legacy_session", "windowed_qa"] = "legacy_session"
+    active: Literal["legacy_session", "windowed_qa", "swarm"] = "legacy_session"
+
+
+class AppModeConfig(_StrictModel):
+    """Новая секция режима приложения."""
+
+    mode: Literal["legacy_session", "windowed_qa", "swarm"] = "legacy_session"
 
 
 class BotConfig(_StrictModel):
@@ -104,6 +110,27 @@ class PathsConfig(_StrictModel):
     topics_path: str = "ai/prompts/topics.md"
     reply_rules_path: str = "ai/prompts/reply_rules.md"
     prompts_dir: str = "ai/prompts"
+
+
+class StorageConfig(_StrictModel):
+    """Новая секция путей к хранилищу."""
+
+    db_path: str = "data/history.db"
+
+
+class TargetConfig(_StrictModel):
+    """Новая секция целевой группы."""
+
+    group_chat_id: int | None = None
+    group_target: OptionalStr = None
+
+
+class PromptsConfig(_StrictModel):
+    """Новая секция путей к промтам."""
+
+    base_dir: str = "ai/prompts"
+    topics_path: str = "ai/prompts/topics.md"
+    bot_profiles_dir: str = "ai/prompts/bots"
 
 
 class GeminiConfig(_StrictModel):
@@ -211,18 +238,114 @@ class ReplyGuardConfig(_StrictModel):
     classifier_prompt_path: str = "ai/prompts/reply_guard/classifier.md"
 
 
+class SwarmBotConfig(_StrictModel):
+    """Конфигурация одного userbot в swarm-режиме."""
+
+    id: str
+    session_env: str
+    persona_file: str
+    enabled: bool = True
+    temperature: float = Field(default=0.9, ge=0.0, le=2.0)
+
+
+class SwarmBotRuntimeConfig(_StrictModel):
+    """Развёрнутая runtime-конфигурация userbot с реальной строкой сессии."""
+
+    id: str
+    session_env: str
+    session_string: str
+    persona_file: str
+    enabled: bool = True
+    temperature: float = Field(default=0.9, ge=0.0, le=2.0)
+
+
+class SwarmScheduleConfig(_StrictModel):
+    """Расписание swarm-обменов."""
+
+    active_windows_utc: list[str] = Field(default_factory=list)
+    initiator_offset_minutes: MinuteRange = (0, 30)
+    responder_delay_minutes: MinuteRange = (3, 10)
+    max_turns_per_exchange: int = Field(default=2, ge=1)
+    pair_cooldown_slots: int = Field(default=1, ge=0)
+
+    @field_validator("active_windows_utc")
+    @classmethod
+    def validate_active_windows_utc(cls, value: list[str]) -> list[str]:
+        """Проверяет список UTC-окон в формате HH-HH."""
+        validated: list[str] = []
+        for item in value:
+            normalized = _normalize_optional_str(item)
+            if not isinstance(normalized, str):
+                raise ValueError("Каждое окно active_windows_utc должно быть строкой")
+            parts = normalized.split("-", maxsplit=1)
+            if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+                raise ValueError("active_windows_utc должен содержать окна в формате HH-HH")
+            start_hour = int(parts[0])
+            end_hour = int(parts[1])
+            if not (0 <= start_hour <= 23 and 0 <= end_hour <= 24 and start_hour != end_hour):
+                raise ValueError("active_windows_utc должен удовлетворять 0 <= start <= 23, 0 <= end <= 24 и start != end")
+            validated.append(f"{start_hour}-{end_hour}")
+        return validated
+
+    @field_validator("initiator_offset_minutes", "responder_delay_minutes", mode="before")
+    @classmethod
+    def validate_minute_range(cls, value: object) -> object:
+        """Проверяет диапазон минут [min, max]."""
+        start, end = _read_pair(value, "Диапазон минут")
+        if start < 0 or end < start:
+            raise ValueError("Диапазон минут должен удовлетворять 0 <= min <= max")
+        return (start, end)
+
+
+class SwarmOrchestratorConfig(_StrictModel):
+    """Параметры центрального orchestrator."""
+
+    tick_seconds: int = Field(default=30, ge=1)
+    silence_timeout_minutes: int = Field(default=60, ge=0)
+    skip_if_recent_human_activity: bool = True
+
+
+class SwarmConfig(_StrictModel):
+    """Секция swarm-настроек."""
+
+    enabled: bool = False
+    max_parallel_bots: int = Field(default=20, ge=1)
+    ignore_messages_from_swarm: bool = True
+    reply_only_to_addressed_bot: bool = True
+    schedule: SwarmScheduleConfig = Field(default_factory=SwarmScheduleConfig)
+    orchestrator: SwarmOrchestratorConfig = Field(default_factory=SwarmOrchestratorConfig)
+    bots: list[SwarmBotConfig] = Field(default_factory=list)
+
+    @field_validator("bots")
+    @classmethod
+    def validate_unique_bot_ids(cls, value: list[SwarmBotConfig]) -> list[SwarmBotConfig]:
+        """Проверяет уникальность идентификаторов ботов."""
+        seen: set[str] = set()
+        for bot in value:
+            normalized_bot_id = bot.id.strip().lower()
+            if normalized_bot_id in seen:
+                raise ValueError(f"duplicate swarm bot id: {bot.id}")
+            seen.add(normalized_bot_id)
+        return value
+
+
 class AppConfig(_StrictModel):
     """Полная несекретная TOML-конфигурация."""
 
+    app: AppModeConfig = Field(default_factory=AppModeConfig)
     mode: ModeConfig = Field(default_factory=ModeConfig)
     bot: BotConfig = Field(default_factory=BotConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
+    storage: StorageConfig = Field(default_factory=StorageConfig)
+    target: TargetConfig = Field(default_factory=TargetConfig)
+    prompts: PromptsConfig = Field(default_factory=PromptsConfig)
     gemini: GeminiConfig = Field(default_factory=GeminiConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     legacy_session: LegacySessionConfig = Field(default_factory=LegacySessionConfig)
     windowed_qa: WindowedQAConfig = Field(default_factory=WindowedQAConfig)
     reply_guard: ReplyGuardConfig = Field(default_factory=ReplyGuardConfig)
+    swarm: SwarmConfig = Field(default_factory=SwarmConfig)
 
 
 def _read_pair(value: object, label: str) -> tuple[int, int]:
@@ -268,7 +391,7 @@ class Settings:
             "group_chat_id",
             "group_target",
         }
-        required_secret_keys = {"api_id", "api_hash", "gemini_api_key", "session_string"}
+        required_secret_keys = {"api_id", "api_hash", "gemini_api_key"}
         secret_overrides = {key: overrides.pop(key) for key in list(overrides) if key in secret_keys}
 
         if required_secret_keys - secret_overrides.keys():
@@ -302,13 +425,18 @@ class Settings:
 
     def _apply_app_config(self, config: AppConfig) -> None:
         """Пробрасывает секции TOML в совместимые публичные поля Settings."""
-        self.mode = config.mode.active
+        self.mode = config.app.mode if "app" in config.model_fields_set else config.mode.active
         self.bot_role = config.bot.role
 
-        self.db_path = config.paths.db_path
-        self.topics_path = config.paths.topics_path
+        self.db_path = config.storage.db_path if "storage" in config.model_fields_set else config.paths.db_path
+        self.topics_path = config.prompts.topics_path if "prompts" in config.model_fields_set else config.paths.topics_path
         self.reply_rules_path = config.paths.reply_rules_path
-        self.prompts_dir = config.paths.prompts_dir
+        self.prompts_dir = config.prompts.base_dir if "prompts" in config.model_fields_set else config.paths.prompts_dir
+        self.bot_profiles_dir = config.prompts.bot_profiles_dir
+        if self.group_chat_id is None and config.target.group_chat_id is not None:
+            self.group_chat_id = config.target.group_chat_id
+        if self.group_target is None and config.target.group_target is not None:
+            self.group_target = config.target.group_target
 
         self.gemini_model = config.gemini.model
         self.gemini_fallback_model = config.gemini.fallback_model
@@ -345,6 +473,47 @@ class Settings:
         self.reply_guard_retry_backoff_seconds = config.reply_guard.retry_backoff_seconds
         self.reply_guard_system_prompt_path = config.reply_guard.system_prompt_path
         self.reply_guard_classifier_prompt_path = config.reply_guard.classifier_prompt_path
+
+        self.swarm_enabled = config.swarm.enabled or self.mode == "swarm"
+        self.swarm_max_parallel_bots = config.swarm.max_parallel_bots
+        self.swarm_ignore_messages_from_swarm = config.swarm.ignore_messages_from_swarm
+        self.swarm_reply_only_to_addressed_bot = config.swarm.reply_only_to_addressed_bot
+        self.swarm_schedule_active_windows_utc = list(config.swarm.schedule.active_windows_utc)
+        self.swarm_initiator_offset_minutes = config.swarm.schedule.initiator_offset_minutes
+        self.swarm_responder_delay_minutes = config.swarm.schedule.responder_delay_minutes
+        self.swarm_max_turns_per_exchange = config.swarm.schedule.max_turns_per_exchange
+        self.swarm_pair_cooldown_slots = config.swarm.schedule.pair_cooldown_slots
+        self.swarm_tick_seconds = config.swarm.orchestrator.tick_seconds
+        self.swarm_silence_timeout_minutes = config.swarm.orchestrator.silence_timeout_minutes
+        self.swarm_skip_if_recent_human_activity = config.swarm.orchestrator.skip_if_recent_human_activity
+        self.swarm_bots = self._resolve_swarm_bots(config.swarm.bots)
+        self.swarm_bot_ids = [bot.id for bot in self.swarm_bots]
+
+        if self.mode == "swarm":
+            if not self.swarm_bots:
+                raise ValueError("swarm mode requires at least one enabled or configured bot")
+            self.whitelist_user_ids = ""
+
+    def _resolve_swarm_bots(self, bots: list[SwarmBotConfig]) -> list[SwarmBotRuntimeConfig]:
+        """Разворачивает session_env каждого swarm-бота в фактическую строку сессии."""
+        resolved_bots: list[SwarmBotRuntimeConfig] = []
+        for bot in bots:
+            session_string = os.environ.get(bot.session_env)
+            if session_string is None or session_string.strip() == "":
+                raise ValueError(f"Swarm bot session env is missing or empty: {bot.session_env}")
+            resolved_bots.append(
+                SwarmBotRuntimeConfig.model_validate(
+                    {
+                        "id": bot.id,
+                        "session_env": bot.session_env,
+                        "session_string": session_string.strip(),
+                        "persona_file": bot.persona_file,
+                        "enabled": bot.enabled,
+                        "temperature": bot.temperature,
+                    },
+                )
+            )
+        return resolved_bots
 
 
 @lru_cache(maxsize=1)

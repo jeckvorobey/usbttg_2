@@ -12,7 +12,6 @@ BASE_ENV = {
     "API_ID": "12345678",
     "API_HASH": "test_api_hash_abc",
     "GEMINI_API_KEY": "test_gemini_key_xyz",
-    "SESSION_STRING": "test-session-string",
 }
 
 
@@ -29,7 +28,7 @@ def test_settings_loads_required_fields():
 
 def test_settings_reads_session_string():
     """Проверяет, что строковая сессия загружается из переменной окружения."""
-    env = {**BASE_ENV}
+    env = {**BASE_ENV, "SESSION_STRING": "test-session-string"}
     with patch.dict(os.environ, env, clear=True):
         from core.config import Settings
 
@@ -51,8 +50,8 @@ def test_settings_missing_required_field_raises():
             Settings(_env_file=None)
 
 
-def test_settings_missing_session_string_raises():
-    """Проверяет, что отсутствие строковой сессии вызывает исключение."""
+def test_settings_missing_session_string_is_allowed_for_swarm_setup():
+    """Проверяет, что legacy SESSION_STRING больше не обязателен."""
     env_without_session_string = {
         "API_ID": "12345678",
         "API_HASH": "test_hash",
@@ -61,8 +60,9 @@ def test_settings_missing_session_string_raises():
     with patch.dict(os.environ, env_without_session_string, clear=True):
         from core.config import Settings
 
-        with pytest.raises(Exception):
-            Settings(_env_file=None)
+        settings = Settings(_env_file=None)
+
+    assert settings.session_string is None
 
 
 def test_settings_rejects_empty_session_string():
@@ -76,18 +76,18 @@ def test_settings_rejects_empty_session_string():
     with patch.dict(os.environ, env, clear=True):
         from core.config import Settings
 
-        with pytest.raises(Exception):
-            Settings(_env_file=None)
+        settings = Settings(_env_file=None)
+
+    assert settings.session_string is None
 
 
 def test_load_settings_or_exit_logs_validation_error(monkeypatch, caplog, tmp_path):
     """Проверяет, что ошибка конфигурации логируется перед остановкой."""
-    env_without_session_string = {
-        "API_ID": "12345678",
+    env_without_api_id = {
         "API_HASH": "test_hash",
         "GEMINI_API_KEY": "test_key",
     }
-    with patch.dict(os.environ, env_without_session_string, clear=True):
+    with patch.dict(os.environ, env_without_api_id, clear=True):
         from core.config import get_settings, load_settings_or_exit
 
         monkeypatch.chdir(tmp_path)

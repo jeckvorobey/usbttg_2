@@ -65,6 +65,11 @@ class UserBotClient:
         """Возвращает внутренний экземпляр Telethon-клиента."""
         return self._client
 
+    async def run_until_disconnected(self) -> None:
+        """Делегирует ожидание отключения внутреннему Telethon-клиенту."""
+        client = self._require_client()
+        await client.run_until_disconnected()
+
     async def update_profile(self, first_name: str | None = None, last_name: str | None = None) -> None:
         """Обновляет имя и фамилию текущего Telegram-профиля."""
         client = self._require_client()
