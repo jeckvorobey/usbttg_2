@@ -224,6 +224,41 @@ def test_settings_rejects_missing_settings_path_from_env_file(tmp_path):
             Settings(_env_file=str(env_path))
 
 
+def test_settings_reads_swarm_sessions_from_env_file(tmp_path):
+    """Проверяет загрузку SESSION_STRING_* из .env-файла без экспорта в shell."""
+    settings_path = write_settings(
+        tmp_path,
+        """
+        [app]
+        mode = "swarm"
+
+        [[swarm.bots]]
+        id = "sofia"
+        session_env = "SESSION_STRING_SOFIA"
+        persona_file = "sofia.md"
+        """,
+    )
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "\n".join(
+            [
+                "API_ID=12345678",
+                "API_HASH=test_hash",
+                "GEMINI_API_KEY=test_key",
+                "SESSION_STRING_SOFIA=sofia-session",
+                f"SETTINGS_PATH={settings_path}",
+            ],
+        ),
+        encoding="utf-8",
+    )
+
+    with patch.dict("os.environ", {}, clear=True):
+        settings = Settings(_env_file=str(env_path))
+
+    assert settings.swarm_bot_ids == ["sofia"]
+    assert settings.swarm_bots[0].session_string == "sofia-session"
+
+
 def test_settings_loads_swarm_mode_and_bots(tmp_path):
     """Проверяет загрузку swarm-режима и списка ботов из TOML."""
     settings_path = write_settings(

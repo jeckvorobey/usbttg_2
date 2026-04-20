@@ -41,6 +41,9 @@ class AddressedReplyRouter:
         if sender_id in self.swarm_user_ids:
             logger.info("router: bot_id=%s ignore sender from swarm sender_id=%s", self.bot_profile.id, sender_id)
             return False
+        if await self._is_bot_sender(event):
+            logger.info("router: bot_id=%s ignore telegram-bot sender sender_id=%s", self.bot_profile.id, sender_id)
+            return False
 
         if not getattr(event, "is_reply", False):
             logger.info("router: bot_id=%s ignore non-reply event_id=%s", self.bot_profile.id, getattr(event, "id", None))
@@ -116,3 +119,12 @@ class AddressedReplyRouter:
             reply_to_message_id,
         )
         return True
+
+    async def _is_bot_sender(self, event: Any) -> bool:
+        """Проверяет, что отправитель не является Telegram-ботом."""
+        sender = getattr(event, "sender", None)
+        if sender is None:
+            get_sender = getattr(event, "get_sender", None)
+            if callable(get_sender):
+                sender = await get_sender()
+        return bool(getattr(sender, "bot", False))

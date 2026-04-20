@@ -16,6 +16,7 @@ def _build_event(
     is_reply: bool = True,
     reply_sender_id: int | None = 101,
     reply_message_id: int = 55,
+    sender_is_bot: bool = False,
 ):
     reply_message = SimpleNamespace(sender_id=reply_sender_id, id=reply_message_id)
     return SimpleNamespace(
@@ -26,6 +27,7 @@ def _build_event(
         id=77,
         reply=AsyncMock(),
         get_reply_message=AsyncMock(return_value=reply_message if is_reply else None),
+        get_sender=AsyncMock(return_value=SimpleNamespace(bot=sender_is_bot)),
     )
 
 
@@ -73,6 +75,22 @@ async def test_router_ignores_messages_from_swarm_bot():
     )
 
     handled = await router.handle_event(_build_event(sender_id=202, reply_sender_id=101))
+
+    assert handled is False
+
+
+@pytest.mark.asyncio
+async def test_router_ignores_reply_from_telegram_bot_sender():
+    """Проверяет, что бот не отвечает на reply от Telegram-бота."""
+    router = AddressedReplyRouter(
+        bot_profile=SwarmBotProfile(id="anna", session_string="anna", persona_file="anna.md", telegram_user_id=101),
+        history=SimpleNamespace(get_session_history=AsyncMock(), save_message=AsyncMock()),
+        prompt_composer=SimpleNamespace(compose=AsyncMock(return_value="system")),
+        gemini_client=SimpleNamespace(generate_reply=AsyncMock()),
+        swarm_user_ids={202, 303},
+    )
+
+    handled = await router.handle_event(_build_event(sender_id=999, reply_sender_id=101, sender_is_bot=True))
 
     assert handled is False
 

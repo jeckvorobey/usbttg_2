@@ -46,6 +46,12 @@ class BotRuntimeState:
         self.last_error_text = error_text
         self.reconnect_attempts += 1
 
+    def mark_failed(self, error_text: str) -> None:
+        """Фиксирует фатальную ошибку и исключение бота из активного пула."""
+        self.status = "error"
+        self.last_error_at = datetime.now(UTC)
+        self.last_error_text = error_text
+
     def mark_stopped(self) -> None:
         """Фиксирует штатную остановку клиента."""
         self.status = "stopped"

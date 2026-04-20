@@ -7,6 +7,7 @@ import inspect
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from urllib.parse import urlparse
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -71,6 +72,25 @@ def _chat_id_matches(expected_chat_id: int, actual_chat_id: object) -> bool:
     return isinstance(actual_chat_id, int) and actual_chat_id in _iter_candidate_chat_ids(expected_chat_id)
 
 
+def _is_invite_link(target: str | None) -> bool:
+    """Определяет, является ли target приватной invite-ссылкой Telegram."""
+    if not isinstance(target, str):
+        return False
+    normalized = target.strip()
+    return normalized.startswith(("https://t.me/+", "http://t.me/+", "https://t.me/joinchat/", "http://t.me/joinchat/"))
+
+
+def _normalize_public_group_target(target: str) -> str:
+    """Нормализует публичный target группы до формы, совместимой с Telethon."""
+    normalized = target.strip()
+    parsed = urlparse(normalized)
+    if parsed.scheme in {"http", "https"} and parsed.netloc == "t.me":
+        path = parsed.path.strip("/")
+        if path and "/" not in path:
+            return f"@{path}" if not path.startswith("@") else path
+    return normalized
+
+
 async def _resolve_group_target(
     telegram_client: object | None,
     group_chat_id: int | None,
@@ -115,6 +135,41 @@ async def _resolve_group_target(
         return resolved_target
 
     logger.warning("Не удалось найти entity целевой группы: GROUP_CHAT_ID=%s GROUP_TARGET=%s", group_chat_id, group_target)
+    return None
+
+
+async def _ensure_group_membership(
+    client_wrapper: UserBotClient,
+    group_chat_id: int | None,
+    group_target: str | None,
+    bot_id: str,
+) -> object | None:
+    """Гарантирует доступ клиента к целевой группе, при необходимости выполняя вступление."""
+    telegram_client = client_wrapper.client
+    resolved_target = await _resolve_group_target(telegram_client, group_chat_id, group_target)
+    if resolved_target is not None:
+        logger.info("swarm: bot_id=%s уже имеет доступ к целевой группе", bot_id)
+        return resolved_target
+
+    normalized_target = group_target.strip() if isinstance(group_target, str) else None
+    if not normalized_target:
+        logger.warning("swarm: bot_id=%s пропускает автovступление: group_target не задан", bot_id)
+        return None
+
+    if _is_invite_link(normalized_target):
+        logger.info("swarm: bot_id=%s пытается вступить в группу по invite link", bot_id)
+        await client_wrapper.join_invite_link(normalized_target)
+    else:
+        public_target = _normalize_public_group_target(normalized_target)
+        logger.info("swarm: bot_id=%s пытается вступить в публичную группу: %s", bot_id, public_target)
+        await client_wrapper.join_group(public_target)
+
+    resolved_target = await _resolve_group_target(telegram_client, group_chat_id, group_target)
+    if resolved_target is not None:
+        logger.info("swarm: bot_id=%s успешно получил доступ к целевой группе после автovступления", bot_id)
+        return resolved_target
+
+    logger.warning("swarm: bot_id=%s не смог получить доступ к группе после автovступления", bot_id)
     return None
 
 
@@ -241,8 +296,16 @@ async def _run_swarm_mode(settings: object, runtime: RuntimeContext, scheduler: 
             api_hash=settings.api_hash,
             proxy_url=settings.proxy_url,
         ),
+        startup_hook=lambda profile, client: _ensure_group_membership(
+            client,
+            settings.group_chat_id,
+            settings.group_target,
+            profile.id,
+        ),
     )
     await manager.start()
+    if len(manager.active_bot_ids) < 2:
+        raise ValueError("Swarm mode requires at least two active bots after startup")
     await _register_swarm_handlers(manager, runtime)
 
     first_client = manager.get_client(manager.active_bot_ids[0]).client
@@ -265,7 +328,14 @@ async def _run_swarm_mode(settings: object, runtime: RuntimeContext, scheduler: 
         max_turns_per_exchange=settings.swarm_max_turns_per_exchange,
         pair_cooldown_slots=settings.swarm_pair_cooldown_slots,
         active_windows_utc=settings.swarm_schedule_active_windows_utc,
+        initiator_offset_minutes=settings.swarm_initiator_offset_minutes,
+        responder_delay_minutes=settings.swarm_responder_delay_minutes,
         skip_if_recent_human_activity=settings.swarm_skip_if_recent_human_activity,
+        resolve_group_target=lambda telegram_client: _resolve_group_target(
+            telegram_client,
+            settings.group_chat_id,
+            settings.group_target,
+        ),
     )
     scheduler.add_job(
         orchestrator.run_once,

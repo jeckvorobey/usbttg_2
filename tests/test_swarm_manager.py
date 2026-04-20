@@ -110,3 +110,35 @@ async def test_swarm_manager_reconnects_after_client_error():
 
     assert fake_client.start.await_count >= 2
     assert manager.runtime_states["anna"].reconnect_attempts >= 1
+
+
+@pytest.mark.asyncio
+async def test_swarm_manager_skips_bot_when_startup_fails():
+    """Проверяет, что бот с ошибкой startup не попадает в активный пул."""
+    anna_client = SimpleNamespace(
+        start=AsyncMock(side_effect=RuntimeError("join failed")),
+        stop=AsyncMock(),
+        get_current_user=AsyncMock(return_value=SimpleNamespace(id=101)),
+        run_until_disconnected=AsyncMock(),
+    )
+    john_client = SimpleNamespace(
+        start=AsyncMock(),
+        stop=AsyncMock(),
+        get_current_user=AsyncMock(return_value=SimpleNamespace(id=202)),
+        run_until_disconnected=AsyncMock(),
+    )
+
+    manager = SwarmManager(
+        bot_profiles=[
+            SwarmBotProfile(id="anna", session_string="anna", persona_file="anna.md", enabled=True),
+            SwarmBotProfile(id="john", session_string="john", persona_file="john.md", enabled=True),
+        ],
+        client_factory=lambda profile: anna_client if profile.id == "anna" else john_client,
+    )
+
+    await manager.start()
+
+    assert manager.active_bot_ids == ["john"]
+    assert set(manager.clients) == {"john"}
+    assert manager.swarm_user_ids == {202}
+    assert manager.runtime_states["anna"].status == "error"

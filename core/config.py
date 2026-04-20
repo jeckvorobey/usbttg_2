@@ -9,6 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
+from dotenv import dotenv_values
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, field_validator
 from pydantic_core import PydanticCustomError
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -275,10 +276,24 @@ def _load_toml_config(settings_path: str | Path | None, *, require_exists: bool 
     return AppConfig.model_validate(data)
 
 
+def _load_env_lookup(env_file: str | None | object) -> dict[str, str]:
+    """Собирает карту переменных окружения с учётом .env и приоритета os.environ."""
+    env_lookup: dict[str, str] = {}
+
+    if isinstance(env_file, str):
+        env_path = Path(env_file)
+        if env_path.exists():
+            env_lookup.update({key: value for key, value in dotenv_values(env_path).items() if value is not None})
+
+    env_lookup.update(os.environ)
+    return env_lookup
+
+
 class Settings:
     """Фасад конфигурации с прежними публичными именами полей."""
 
     def __init__(self, _env_file: str | None | object = ".env", **overrides: object) -> None:
+        self._env_lookup = _load_env_lookup(_env_file)
         settings_path_override = overrides.pop("settings_path", _UNSET)
         secret_keys = {
             "api_id",
@@ -369,7 +384,7 @@ class Settings:
         """Разворачивает session_env каждого swarm-бота в фактическую строку сессии."""
         resolved_bots: list[SwarmBotRuntimeConfig] = []
         for bot in bots:
-            session_string = os.environ.get(bot.session_env)
+            session_string = self._env_lookup.get(bot.session_env)
             if session_string is None or session_string.strip() == "":
                 raise ValueError(f"Swarm bot session env is missing or empty: {bot.session_env}")
             resolved_bots.append(

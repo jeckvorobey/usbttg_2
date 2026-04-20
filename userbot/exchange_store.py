@@ -38,10 +38,13 @@ class ExchangeStore:
                 initiator_bot_id TEXT NOT NULL,
                 responder_bot_id TEXT NOT NULL,
                 pair_key TEXT NOT NULL,
+                window_key TEXT,
                 topic TEXT NOT NULL,
                 topic_key TEXT NOT NULL,
                 question_text TEXT,
                 question_signature TEXT,
+                initiator_scheduled_at TIMESTAMP,
+                responder_scheduled_at TIMESTAMP,
                 initiator_message_id INTEGER,
                 status TEXT NOT NULL DEFAULT 'planned',
                 skip_reason TEXT,
@@ -53,9 +56,12 @@ class ExchangeStore:
         )
         await connection.commit()
         await self._ensure_column(connection, "pair_key", "TEXT")
+        await self._ensure_column(connection, "window_key", "TEXT")
         await self._ensure_column(connection, "topic_key", "TEXT")
         await self._ensure_column(connection, "question_text", "TEXT")
         await self._ensure_column(connection, "question_signature", "TEXT")
+        await self._ensure_column(connection, "initiator_scheduled_at", "TIMESTAMP")
+        await self._ensure_column(connection, "responder_scheduled_at", "TIMESTAMP")
         await self._ensure_column(connection, "initiator_message_id", "INTEGER")
         await self._ensure_column(connection, "skip_reason", "TEXT")
         await self._ensure_column(connection, "started_at", "TIMESTAMP")
@@ -69,6 +75,8 @@ class ExchangeStore:
         responder_bot_id: str,
         topic: str,
         topic_key: str | None = None,
+        window_key: str | None = None,
+        initiator_scheduled_at: datetime | None = None,
     ) -> str:
         """Создаёт запись planned exchange и возвращает её идентификатор."""
         exchange_id = str(uuid.uuid4())
@@ -82,21 +90,34 @@ class ExchangeStore:
                 initiator_bot_id,
                 responder_bot_id,
                 pair_key,
+                window_key,
                 topic,
                 topic_key,
+                initiator_scheduled_at,
                 status
             )
-            VALUES (?, ?, ?, ?, ?, ?, 'planned')
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'planned')
             """,
-            (exchange_id, initiator_bot_id, responder_bot_id, pair_key, topic, normalized_topic_key),
+            (
+                exchange_id,
+                initiator_bot_id,
+                responder_bot_id,
+                pair_key,
+                window_key,
+                topic,
+                normalized_topic_key,
+                self._serialize_timestamp(initiator_scheduled_at),
+            ),
         )
         await connection.commit()
         logger.info(
-            "Создан planned exchange: exchange_id=%s initiator=%s responder=%s topic_key=%s",
+            "Создан planned exchange: exchange_id=%s initiator=%s responder=%s topic_key=%s window_key=%s initiator_due=%s",
             exchange_id,
             initiator_bot_id,
             responder_bot_id,
             normalized_topic_key,
+            window_key,
+            self._serialize_timestamp(initiator_scheduled_at),
         )
         return exchange_id
 
@@ -107,6 +128,7 @@ class ExchangeStore:
         initiator_message_id: int | None = None,
         question_text: str | None = None,
         question_signature: str | None = None,
+        responder_scheduled_at: datetime | None = None,
     ) -> None:
         """Помечает exchange как начатый."""
         connection = await self._get_connection()
@@ -117,6 +139,7 @@ class ExchangeStore:
                 initiator_message_id = ?,
                 question_text = ?,
                 question_signature = ?,
+                responder_scheduled_at = ?,
                 started_at = CURRENT_TIMESTAMP
             WHERE exchange_id = ?
             """,
@@ -124,6 +147,7 @@ class ExchangeStore:
                 initiator_message_id,
                 question_text,
                 normalize_signature(question_signature) if question_signature else None,
+                self._serialize_timestamp(responder_scheduled_at),
                 exchange_id,
             ),
         )
@@ -180,6 +204,58 @@ class ExchangeStore:
         pairs = [(row[0], row[1]) for row in rows]
         logger.info("Загружены последние пары exchange: count=%s", len(pairs))
         return pairs
+
+    async def get_exchange_by_window_key(self, window_key: str) -> dict[str, object] | None:
+        """Возвращает exchange, уже зарегистрированный в текущем окне."""
+        connection = await self._get_connection()
+        async with connection.execute(
+            """
+            SELECT *
+            FROM scheduled_exchanges
+            WHERE window_key = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (window_key,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return dict(row) if row is not None else None
+
+    async def get_due_planned_exchange(self, *, now: datetime) -> dict[str, object] | None:
+        """Возвращает ближайший planned exchange, которому пора отправить вопрос."""
+        connection = await self._get_connection()
+        async with connection.execute(
+            """
+            SELECT *
+            FROM scheduled_exchanges
+            WHERE status = 'planned'
+              AND initiator_scheduled_at IS NOT NULL
+              AND datetime(initiator_scheduled_at) <= datetime(?)
+            ORDER BY datetime(initiator_scheduled_at) ASC, created_at ASC
+            LIMIT 1
+            """,
+            (self._serialize_timestamp(now),),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return dict(row) if row is not None else None
+
+    async def get_due_started_exchange(self, *, now: datetime) -> dict[str, object] | None:
+        """Возвращает ближайший started exchange, которому пора отправить ответ."""
+        connection = await self._get_connection()
+        async with connection.execute(
+            """
+            SELECT *
+            FROM scheduled_exchanges
+            WHERE status = 'started'
+              AND responder_scheduled_at IS NOT NULL
+              AND datetime(responder_scheduled_at) <= datetime(?)
+            ORDER BY datetime(responder_scheduled_at) ASC, started_at ASC
+            LIMIT 1
+            """,
+            (self._serialize_timestamp(now),),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return dict(row) if row is not None else None
 
     async def get_recent_topic_keys(self, *, since: timedelta) -> set[str]:
         """Возвращает недавно использованные topic_key."""
@@ -248,6 +324,7 @@ class ExchangeStore:
         if self._connection is None:
             self._ensure_parent_dir()
             self._connection = await aiosqlite.connect(self.db_path)
+            self._connection.row_factory = aiosqlite.Row
         return self._connection
 
     def _ensure_parent_dir(self) -> None:
@@ -276,3 +353,12 @@ class ExchangeStore:
     def _threshold_timestamp(since: timedelta) -> str:
         """Возвращает UTC timestamp для SQL-фильтра recent-запросов."""
         return (datetime.now(UTC) - since).strftime("%Y-%m-%d %H:%M:%S")
+
+    @staticmethod
+    def _serialize_timestamp(value: datetime | None) -> str | None:
+        """Преобразует datetime в SQLite-friendly UTC timestamp."""
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
