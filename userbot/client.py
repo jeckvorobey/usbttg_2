@@ -1,6 +1,7 @@
 """Инициализация и управление Telethon клиентом."""
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -65,6 +66,11 @@ class UserBotClient:
         """Возвращает внутренний экземпляр Telethon-клиента."""
         return self._client
 
+    async def run_until_disconnected(self) -> None:
+        """Делегирует ожидание отключения внутреннему Telethon-клиенту."""
+        client = self._require_client()
+        await client.run_until_disconnected()
+
     async def update_profile(self, first_name: str | None = None, last_name: str | None = None) -> None:
         """Обновляет имя и фамилию текущего Telegram-профиля."""
         client = self._require_client()
@@ -98,6 +104,24 @@ class UserBotClient:
         client = self._require_client()
         logger.info("Запрос данных текущего Telegram-пользователя")
         return await client.get_me()
+
+    async def join_group(self, target: str) -> Any:
+        """Вступает в публичную группу или канал по username/ссылке."""
+        client = self._require_client()
+        requests = _import_telethon_channel_requests()
+        logger.info("Вступление в публичную Telegram-группу: target=%s", target)
+        return await client(requests.JoinChannelRequest(target))
+
+    async def join_invite_link(self, invite_link: str) -> Any:
+        """Вступает в приватную группу по invite link."""
+        client = self._require_client()
+        invite_hash = _extract_invite_hash(invite_link)
+        if invite_hash is None:
+            raise ValueError("Некорректный invite link Telegram")
+
+        requests = _import_telethon_invite_requests()
+        logger.info("Вступление в приватную Telegram-группу по invite link")
+        return await client(requests.ImportChatInviteRequest(invite_hash))
 
     def _require_client(self) -> Any:
         """Возвращает активный Telethon-клиент или поднимает ошибку."""
@@ -172,3 +196,43 @@ def _import_telethon_profile_requests() -> Any:
             "UploadProfilePhotoRequest": UploadProfilePhotoRequest,
         },
     )
+
+
+def _import_telethon_channel_requests() -> Any:
+    """Импортирует Telethon requests для вступления в публичные каналы и группы."""
+    try:
+        from telethon.tl.functions.channels import JoinChannelRequest
+    except ImportError as exc:
+        raise RuntimeError("Пакет telethon не установлен") from exc
+
+    return type("TelethonChannelRequests", (), {"JoinChannelRequest": JoinChannelRequest})
+
+
+def _import_telethon_invite_requests() -> Any:
+    """Импортирует Telethon requests для приватных invite-ссылок."""
+    try:
+        from telethon.tl.functions.messages import ImportChatInviteRequest
+    except ImportError as exc:
+        raise RuntimeError("Пакет telethon не установлен") from exc
+
+    return type("TelethonInviteRequests", (), {"ImportChatInviteRequest": ImportChatInviteRequest})
+
+
+def _extract_invite_hash(invite_link: str) -> str | None:
+    """Извлекает hash из Telegram invite link."""
+    normalized = invite_link.strip()
+    if not normalized:
+        return None
+    if normalized.startswith("https://t.me/+"):
+        invite_hash = normalized.removeprefix("https://t.me/+")
+        return invite_hash or None
+    if normalized.startswith("http://t.me/+"):
+        invite_hash = normalized.removeprefix("http://t.me/+")
+        return invite_hash or None
+    if normalized.startswith("https://t.me/joinchat/"):
+        invite_hash = normalized.removeprefix("https://t.me/joinchat/")
+        return invite_hash or None
+    if normalized.startswith("http://t.me/joinchat/"):
+        invite_hash = normalized.removeprefix("http://t.me/joinchat/")
+        return invite_hash or None
+    return None

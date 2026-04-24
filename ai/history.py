@@ -42,6 +42,10 @@ class MessageHistory:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 chat_id INTEGER,
+                bot_id TEXT,
+                exchange_id TEXT,
+                message_origin TEXT,
+                reply_to_message_id INTEGER,
                 role TEXT NOT NULL,
                 text TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -49,15 +53,23 @@ class MessageHistory:
             """
         )
         await connection.commit()
-        try:
-            await connection.execute("ALTER TABLE messages ADD COLUMN chat_id INTEGER")
-            await connection.commit()
-        except Exception:
-            pass  # колонка уже существует
+        await self._ensure_column(connection, "chat_id", "INTEGER")
+        await self._ensure_column(connection, "bot_id", "TEXT")
+        await self._ensure_column(connection, "exchange_id", "TEXT")
+        await self._ensure_column(connection, "message_origin", "TEXT")
+        await self._ensure_column(connection, "reply_to_message_id", "INTEGER")
         logger.info("Таблица истории сообщений готова")
 
     async def save_message(
-        self, user_id: int, role: str, text: str, chat_id: int | None = None
+        self,
+        user_id: int,
+        role: str,
+        text: str,
+        chat_id: int | None = None,
+        bot_id: str | None = None,
+        exchange_id: str | None = None,
+        message_origin: str | None = None,
+        reply_to_message_id: int | None = None,
     ) -> None:
         """
         Сохраняет сообщение в историю диалога.
@@ -78,10 +90,30 @@ class MessageHistory:
         created_at = _to_utc_sqlite_timestamp(datetime.now(UTC))
         await connection.execute(
             """
-            INSERT INTO messages (user_id, chat_id, role, text, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO messages (
+                user_id,
+                chat_id,
+                bot_id,
+                exchange_id,
+                message_origin,
+                reply_to_message_id,
+                role,
+                text,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (user_id, chat_id, role, text, created_at),
+            (
+                user_id,
+                chat_id,
+                bot_id,
+                exchange_id,
+                message_origin,
+                reply_to_message_id,
+                role,
+                text,
+                created_at,
+            ),
         )
         await connection.commit()
         logger.info("Сообщение сохранено в историю для user_id=%s", user_id)
@@ -125,6 +157,7 @@ class MessageHistory:
         chat_id: int | None,
         session_start: datetime | None = None,
         limit: int = 50,
+        bot_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Возвращает историю сообщений всех участников чата за текущую сессию.
@@ -148,34 +181,54 @@ class MessageHistory:
         )
         connection = await self._get_connection()
 
+        params: list[Any] = [chat_id]
+        where_parts = ["chat_id = ?"]
+        if bot_id is not None:
+            where_parts.append("bot_id = ?")
+            params.append(bot_id)
+
         if session_start is not None:
             session_start_str = _to_utc_sqlite_timestamp(session_start)
+            params.append(session_start_str)
+            params.append(limit)
             async with connection.execute(
-                """
-                SELECT role, text FROM messages
-                WHERE chat_id = ? AND datetime(created_at) >= datetime(?)
+                f"""
+                SELECT role, text, bot_id, exchange_id, message_origin, reply_to_message_id
+                FROM messages
+                WHERE {' AND '.join(where_parts)} AND datetime(created_at) >= datetime(?)
                 ORDER BY id ASC
                 LIMIT ?
                 """,
-                (chat_id, session_start_str, limit),
+                params,
             ) as cursor:
                 rows = await cursor.fetchall()
         else:
+            params.append(limit)
             async with connection.execute(
-                """
-                SELECT role, text FROM (
-                    SELECT role, text, id FROM messages
-                    WHERE chat_id = ?
+                f"""
+                SELECT role, text, bot_id, exchange_id, message_origin, reply_to_message_id FROM (
+                    SELECT role, text, bot_id, exchange_id, message_origin, reply_to_message_id, id FROM messages
+                    WHERE {' AND '.join(where_parts)}
                     ORDER BY id DESC
                     LIMIT ?
                 ) sub
                 ORDER BY id ASC
                 """,
-                (chat_id, limit),
+                params,
             ) as cursor:
                 rows = await cursor.fetchall()
 
-        messages = [{"role": row[0], "text": row[1]} for row in rows]
+        messages = [
+            {
+                "role": row[0],
+                "text": row[1],
+                "bot_id": row[2],
+                "exchange_id": row[3],
+                "message_origin": row[4],
+                "reply_to_message_id": row[5],
+            }
+            for row in rows
+        ]
         logger.info(
             "Загружена история сессии для chat_id=%s: %s записей", chat_id, len(messages)
         )
@@ -205,3 +258,12 @@ class MessageHistory:
         parent = Path(self.db_path).parent
         if str(parent) and str(parent) != ".":
             parent.mkdir(parents=True, exist_ok=True)
+
+    async def _ensure_column(self, connection: aiosqlite.Connection, column_name: str, column_type: str) -> None:
+        """Добавляет колонку в messages; пропускает только duplicate-column."""
+        try:
+            await connection.execute(f"ALTER TABLE messages ADD COLUMN {column_name} {column_type}")
+            await connection.commit()
+        except aiosqlite.OperationalError as exc:
+            if "duplicate column" not in str(exc).lower():
+                raise
