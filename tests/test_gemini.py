@@ -53,8 +53,8 @@ async def test_prompt_loader_preserves_full_content():
 
 
 @pytest.mark.asyncio
-async def test_prompt_files_target_nha_trang_group():
-    """Проверяет, что промты жёстко держат фокус на Нячанге."""
+async def test_prompt_files_target_da_nang_group():
+    """Проверяет, что промты жёстко держат фокус на Дананге."""
     loader = PromptLoader(prompts_dir="ai/prompts")
 
     system_prompt = await loader.load("system")
@@ -62,8 +62,8 @@ async def test_prompt_files_target_nha_trang_group():
     start_topic_prompt = await loader.load("start_topic")
 
     for prompt in (system_prompt, reply_prompt, start_topic_prompt):
-        assert "Нячанг" in prompt
-        assert "Дананг" not in prompt
+        assert "Дананг" in prompt
+        assert "Нячанг" not in prompt
         assert "Таиланд" not in prompt
         assert "Камбоджу" not in prompt
 
@@ -77,9 +77,9 @@ async def test_prompts_forbid_comparisons_with_other_cities():
     reply_prompt = await loader.load("reply")
     start_topic_prompt = await loader.load("start_topic")
 
-    assert "Не сравнивай Нячанг с другими городами" in system_prompt
-    assert "Не сравнивай Нячанг с другими городами" in reply_prompt
-    assert "Пиши только про Нячанг" in start_topic_prompt
+    assert "Не сравнивай Дананг с другими городами" in system_prompt
+    assert "Не сравнивай Дананг с другими городами" in reply_prompt
+    assert "Пиши только про Дананг" in start_topic_prompt
     assert "короткое сравнение" not in system_prompt
     assert "короткое сравнение" not in reply_prompt
     assert "просьба сравнить опыт" not in start_topic_prompt
@@ -109,7 +109,7 @@ async def test_start_topic_prompt_avoids_editorial_post_format():
     assert "обычный вброс участника" in start_topic_prompt
     assert "Без списков" in start_topic_prompt
     assert "Без «топ-5»" in start_topic_prompt
-    assert "только про Нячанг" in start_topic_prompt
+    assert "только про Дананг" in start_topic_prompt
     assert "короткий вопрос" in start_topic_prompt
     assert "максимум 2 совсем короткие фразы" in start_topic_prompt
 
@@ -159,12 +159,12 @@ async def test_system_and_reply_prompts_require_non_intrusive_service_mentions()
     assert "не возвращай разговор к одному и тому же офферу" in reply_prompt
 
 
-def test_topics_file_contains_only_nha_trang_focused_topics():
+def test_topics_file_contains_only_da_nang_focused_topics():
     """Проверяет, что production-темы не уводят разговор в другие города."""
     topics = Path("ai/prompts/topics.md").read_text(encoding="utf-8")
 
-    assert "Нячанг" in topics
-    assert "Дананг" not in topics
+    assert "Дананг" in topics
+    assert "Нячанг" not in topics
 
 
 def test_gemini_client_initializes_with_api_key():
