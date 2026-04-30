@@ -52,119 +52,34 @@ async def test_prompt_loader_preserves_full_content():
         assert result == content
 
 
-@pytest.mark.asyncio
-async def test_prompt_files_target_nha_trang_group():
-    """Проверяет, что промты жёстко держат фокус на Нячанге."""
-    loader = PromptLoader(prompts_dir="ai/prompts")
+def test_prompt_examples_are_committed_without_runtime_names():
+    """Проверяет, что в репозитории есть шаблоны, а не production-промты."""
+    examples = [
+        Path("ai/prompts/system.example.md"),
+        Path("ai/prompts/reply.example.md"),
+        Path("ai/prompts/start_topic.example.md"),
+        Path("ai/prompts/topics.example.md"),
+        Path("ai/prompts/reply_rules.example.md"),
+        Path("ai/prompts/wind_down_hint.example.md"),
+        Path("ai/prompts/bots/persona.example.md"),
+    ]
 
+    for path in examples:
+        assert path.exists(), f"Нет example-файла: {path}"
+        assert path.read_text(encoding="utf-8").strip()
+
+
+@pytest.mark.asyncio
+async def test_prompt_loader_can_read_copied_example_prompt(tmp_path):
+    """Проверяет, что example-шаблон можно скопировать в runtime-имя без изменения загрузчика."""
+    source = Path("ai/prompts/system.example.md")
+    target = tmp_path / "system.md"
+    target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+
+    loader = PromptLoader(prompts_dir=str(tmp_path))
     system_prompt = await loader.load("system")
-    reply_prompt = await loader.load("reply")
-    start_topic_prompt = await loader.load("start_topic")
 
-    for prompt in (system_prompt, reply_prompt, start_topic_prompt):
-        assert "Нячанг" in prompt
-        assert "Дананг" not in prompt
-        assert "Таиланд" not in prompt
-        assert "Камбоджу" not in prompt
-
-
-@pytest.mark.asyncio
-async def test_prompts_forbid_comparisons_with_other_cities():
-    """Проверяет, что промты запрещают сравнения с другими городами."""
-    loader = PromptLoader(prompts_dir="ai/prompts")
-
-    system_prompt = await loader.load("system")
-    reply_prompt = await loader.load("reply")
-    start_topic_prompt = await loader.load("start_topic")
-
-    assert "Не сравнивай Нячанг с другими городами" in system_prompt
-    assert "Не сравнивай Нячанг с другими городами" in reply_prompt
-    assert "Пиши только про Нячанг" in start_topic_prompt
-    assert "короткое сравнение" not in system_prompt
-    assert "короткое сравнение" not in reply_prompt
-    assert "просьба сравнить опыт" not in start_topic_prompt
-
-
-@pytest.mark.asyncio
-async def test_system_and_reply_prompts_allow_short_multi_sentence_replies():
-    """Проверяет, что промты больше не требуют ответа ровно в одно предложение."""
-    loader = PromptLoader(prompts_dir="ai/prompts")
-
-    system_prompt = await loader.load("system")
-    reply_prompt = await loader.load("reply")
-
-    assert "1–3 коротких предложения" in system_prompt
-    assert "Одно предложение" not in reply_prompt
-    assert "максимум 3" in reply_prompt
-    assert "1-2 коротких предложения" in reply_prompt
-
-
-@pytest.mark.asyncio
-async def test_start_topic_prompt_avoids_editorial_post_format():
-    """Проверяет, что старт темы оформлен как живая реплика участника, а не пост канала."""
-    loader = PromptLoader(prompts_dir="ai/prompts")
-
-    start_topic_prompt = await loader.load("start_topic")
-
-    assert "обычный вброс участника" in start_topic_prompt
-    assert "Без списков" in start_topic_prompt
-    assert "Без «топ-5»" in start_topic_prompt
-    assert "только про Нячанг" in start_topic_prompt
-    assert "короткий вопрос" in start_topic_prompt
-    assert "максимум 2 совсем короткие фразы" in start_topic_prompt
-
-
-@pytest.mark.asyncio
-async def test_start_topic_prompt_requires_question_without_ready_made_advice():
-    """Проверяет, что автозапуск темы требует только нейтральный вопрос без готового ответа."""
-    loader = PromptLoader(prompts_dir="ai/prompts")
-
-    start_topic_prompt = await loader.load("start_topic")
-
-    assert "Только один короткий вопрос" in start_topic_prompt
-    assert "Не пиши готовый ответ" in start_topic_prompt
-    assert "Не давай совет" in start_topic_prompt
-    assert "Не превращай вопрос в мини-статью" in start_topic_prompt
-    assert "Не используй категоричные формулировки" in start_topic_prompt
-
-
-@pytest.mark.asyncio
-async def test_prompts_describe_questions_more_precisely():
-    """Проверяет, что промты разрешают уместный вопрос, но запрещают формальный подвешенный вопрос."""
-    loader = PromptLoader(prompts_dir="ai/prompts")
-
-    system_prompt = await loader.load("system")
-    reply_prompt = await loader.load("reply")
-    start_topic_prompt = await loader.load("start_topic")
-    wind_down_hint = await loader.load("wind_down_hint")
-
-    assert "действительно уместен по смыслу" in system_prompt
-    assert "можно закончить одним коротким вопросом" in reply_prompt
-    assert "формально только ради продолжения разговора" in reply_prompt
-    assert "короткий вопрос" in start_topic_prompt
-    assert "Не заканчивай вопросом" in wind_down_hint
-
-
-@pytest.mark.asyncio
-async def test_system_and_reply_prompts_require_non_intrusive_service_mentions():
-    """Проверяет, что промты запрещают навязчивые и неуместные упоминания сервисов."""
-    loader = PromptLoader(prompts_dir="ai/prompts")
-
-    system_prompt = await loader.load("system")
-    reply_prompt = await loader.load("reply")
-
-    assert "Не упоминай @AntEx_support" in system_prompt
-    assert "не спрашивал про перевод на карту" in system_prompt
-    assert "Не делай разговор навязчивым" in reply_prompt
-    assert "не возвращай разговор к одному и тому же офферу" in reply_prompt
-
-
-def test_topics_file_contains_only_nha_trang_focused_topics():
-    """Проверяет, что production-темы не уводят разговор в другие города."""
-    topics = Path("ai/prompts/topics.md").read_text(encoding="utf-8")
-
-    assert "Нячанг" in topics
-    assert "Дананг" not in topics
+    assert "System prompt example" in system_prompt
 
 
 def test_gemini_client_initializes_with_api_key():

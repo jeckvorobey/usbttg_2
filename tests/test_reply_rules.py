@@ -58,15 +58,27 @@ async def test_reply_rules_loader_returns_empty_list_for_empty_file():
 
 
 @pytest.mark.asyncio
-async def test_reply_rules_loader_matches_exchange_keywords():
+async def test_reply_rules_loader_matches_keywords():
     """Проверяет матчинг правил по словам из сообщения."""
-    loader = ReplyRulesLoader("ai/prompts/reply_rules.md")
-    await loader.load()
+    content = """
+# Правила
 
-    matched = loader.find_matches("Где в Дананге лучше менять доллары и какой курс?")
+## Помощь
+triggers: помощь, вопрос
+instruction: Ответь по теме и без навязчивого тона.
+""".strip()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir) / "reply_rules.md"
+        path.write_text(content, encoding="utf-8")
+
+        loader = ReplyRulesLoader(str(path))
+        await loader.load()
+
+    matched = loader.find_matches("Нужна помощь по вопросу")
 
     assert len(matched) == 1
-    assert matched[0].name == "Обмен валюты"
+    assert matched[0].name == "Помощь"
 
 
 @pytest.mark.asyncio

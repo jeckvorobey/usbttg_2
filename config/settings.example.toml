@@ -28,16 +28,20 @@ db_path = "data/history.db"
 [prompts]
 # Базовая директория с промтами.
 # Внутри неё лежат system.md, reply.md, start_topic.md и другие markdown-файлы.
+# Реальные *.md файлы локальные для каждого инстанса и не коммитятся.
+# Для старта скопируйте *.example.md в такие же имена без .example.
 # Пример: "ai/prompts"
 base_dir = "ai/prompts"
 
 # Путь к файлу со списком тем для плановых диалогов между ботами.
 # Обычно это markdown-файл, где хранятся заготовки тем.
+# Файл локальный для инстанса и не коммитится.
 # Пример: "ai/prompts/topics.md"
 topics_path = "ai/prompts/topics.md"
 
 # Папка с persona-файлами конкретных ботов.
 # Каждый bot из [[swarm.bots]] ссылается на файл из этой директории.
+# Реальные persona-файлы локальные для инстанса и не коммитятся.
 # Пример: "ai/prompts/bots"
 bot_profiles_dir = "ai/prompts/bots"
 

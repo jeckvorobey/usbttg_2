@@ -150,9 +150,23 @@ temperature = 0.8
 - `db_path` это путь к SQLite-файлу;
 - `bot_profiles_dir` это папка с persona-файлами;
 - каждый `persona_file` должен реально существовать;
-- для каждого `session_env` должна быть переменная в `.env`.
+- для каждого `session_env` должна быть переменная в `.env`;
+- реальные файлы `ai/prompts/**/*.md` локальные для инстанса и не коммитятся;
+- в git лежат только шаблоны `ai/prompts/**/*.example.md`.
 
-### 4. Подготовить persona-файлы
+### 4. Подготовить промты
+
+Runtime читает реальные файлы без `.example`:
+- `ai/prompts/system.md`
+- `ai/prompts/reply.md`
+- `ai/prompts/start_topic.md`
+- `ai/prompts/topics.md`
+- `ai/prompts/reply_rules.md`
+- `ai/prompts/wind_down_hint.md`
+
+В репозитории лежат только примеры с суффиксом `.example.md`. Для нового инстанса скопируй нужные шаблоны в такие же имена без `.example` и заполни их под конкретную группу.
+
+### 5. Подготовить persona-файлы
 
 Проект ожидает persona-файлы в директории, указанной в `bot_profiles_dir`.
 
@@ -167,7 +181,9 @@ bot_profiles_dir = "ai/prompts/bots"
 - `ai/prompts/bots/anna.md`
 - `ai/prompts/bots/mike.md`
 
-### 5. Получить `SESSION_STRING` для каждого аккаунта
+Шаблон persona-файла находится в `ai/prompts/bots/persona.example.md`. Реальные persona-файлы тоже локальные и не коммитятся.
+
+### 6. Получить `SESSION_STRING` для каждого аккаунта
 
 Для каждого Telegram-аккаунта нужно один раз получить строку сессии.
 
