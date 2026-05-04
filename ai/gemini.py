@@ -236,7 +236,10 @@ class GeminiClient:
             genai = _import_google_genai()
             self._types = genai.types
 
-            client_kwargs: dict[str, Any] = {"api_key": self.api_key}
+            client_kwargs: dict[str, Any] = {
+                "api_key": self.api_key,
+                "vertexai": True,
+                }
             if self.proxy_url:
                 http_options = genai.types.HttpOptions(
                     client_args={"proxy": self.proxy_url},
