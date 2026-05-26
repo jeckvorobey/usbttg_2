@@ -9,7 +9,7 @@ from typing import Any, Callable
 
 from core.runtime_models import ExchangeDecision, SwarmBotProfile
 from userbot.exchange_store import ExchangeStore, normalize_signature
-from userbot.scheduler import is_within_windows_utc
+from userbot.scheduler import is_within_windows_utc, pick_random_datetime, pick_random_delay
 
 
 logger = logging.getLogger(__name__)
@@ -83,7 +83,7 @@ class SwarmOrchestrator:
             logger.warning("orchestrator: skip exchange because group_target is not configured")
             return False
 
-        window_key, window_start = self._build_window_key(now)
+        window_key, window_start, window_end = self._build_window_key(now)
         get_exchange_by_window_key = getattr(self.exchange_store, "get_exchange_by_window_key", None)
         current_window_exchange = await get_exchange_by_window_key(window_key) if callable(get_exchange_by_window_key) else None
         if current_window_exchange is not None:
@@ -104,7 +104,7 @@ class SwarmOrchestrator:
             decision.responder.id,
             decision.topic_key,
         )
-        initiator_scheduled_at = self._pick_initiator_due_at(window_start=window_start)
+        initiator_scheduled_at = self._pick_initiator_due_at(window_start=window_start, window_end=window_end)
         exchange_id = await self.exchange_store.create_exchange(
             initiator_bot_id=decision.initiator.id,
             responder_bot_id=decision.responder.id,
@@ -206,7 +206,10 @@ class SwarmOrchestrator:
             initiator_client = self.manager.get_client(decision.initiator.id)
             initiator_group_target = await self._resolve_group_target_for_client(initiator_client.client)
             initiator_message = await initiator_client.client.send_message(initiator_group_target, initiator_text)
-            responder_due_at = now + timedelta(minutes=self.randint_provider(*self.responder_delay_minutes))
+            responder_due_at = now + pick_random_delay(
+                self.responder_delay_minutes,
+                randint_provider=self.randint_provider,
+            )
             await self.exchange_store.mark_exchange_started(
                 str(exchange["exchange_id"]),
                 initiator_message_id=getattr(initiator_message, "id", None),
@@ -352,18 +355,22 @@ class SwarmOrchestrator:
                 return profile
         raise KeyError(bot_id)
 
-    def _pick_initiator_due_at(self, *, window_start: datetime) -> datetime:
+    def _pick_initiator_due_at(self, *, window_start: datetime, window_end: datetime) -> datetime:
         """Выбирает момент первого сообщения внутри активного окна."""
         if not self.active_windows_utc:
             return self.now_provider()
-        offset_minutes = self.randint_provider(*self.initiator_offset_minutes)
-        return window_start + timedelta(minutes=offset_minutes)
+        return pick_random_datetime(
+            window_start,
+            window_end,
+            now=self.now_provider(),
+            randint_provider=self.randint_provider,
+        )
 
-    def _build_window_key(self, now: datetime) -> tuple[str, datetime]:
+    def _build_window_key(self, now: datetime) -> tuple[str, datetime, datetime]:
         """Строит persisted ключ текущего активного окна."""
         if not self.active_windows_utc:
             start = now.replace(minute=0, second=0, microsecond=0)
-            return f"{start.strftime('%Y-%m-%dT%H')}:always-open", start
+            return f"{start.strftime('%Y-%m-%dT%H')}:always-open", start, now
 
         for window in self.active_windows_utc:
             start_hour, end_hour = (int(part) for part in window.split("-", maxsplit=1))
@@ -371,9 +378,11 @@ class SwarmOrchestrator:
                 start = now.replace(hour=start_hour, minute=0, second=0, microsecond=0)
                 if start_hour > end_hour and now.hour < end_hour:
                     start -= timedelta(days=1)
-                return f"{start.strftime('%Y-%m-%dT%H')}:{window}", start
+                duration_hours = (end_hour - start_hour) % 24
+                end = start + timedelta(hours=duration_hours)
+                return f"{start.strftime('%Y-%m-%dT%H')}:{window}", start, end
         start = now.replace(minute=0, second=0, microsecond=0)
-        return f"{start.strftime('%Y-%m-%dT%H')}:fallback", start
+        return f"{start.strftime('%Y-%m-%dT%H')}:fallback", start, now
 
     @staticmethod
     def _hour_is_within_window(current_hour: int, start_hour: int, end_hour: int) -> bool:

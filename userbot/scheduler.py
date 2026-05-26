@@ -2,7 +2,8 @@
 
 import logging
 import random
-from datetime import UTC, datetime
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 
@@ -38,6 +39,40 @@ def is_within_windows_utc(active_windows_utc: list[str], now_utc: datetime | Non
             return True
 
     return False
+
+
+def pick_random_delay(
+    minute_range: tuple[int, int],
+    *,
+    randint_provider: Callable[[int, int], int] | None = None,
+) -> timedelta:
+    """Выбирает случайную задержку с точностью до секунд внутри минутного диапазона."""
+    provider = randint_provider or random.randint
+    start_minutes, end_minutes = minute_range
+    delay_seconds = provider(start_minutes * 60, end_minutes * 60)
+    return timedelta(seconds=delay_seconds)
+
+
+def pick_random_datetime(
+    start: datetime,
+    end: datetime,
+    *,
+    now: datetime | None = None,
+    randint_provider: Callable[[int, int], int] | None = None,
+) -> datetime:
+    """Выбирает случайный момент внутри интервала, не уходя в прошлое относительно now."""
+    provider = randint_provider or random.randint
+    normalized_start = _ensure_utc(start)
+    normalized_end = _ensure_utc(end)
+    lower_bound = normalized_start
+    if now is not None:
+        lower_bound = max(lower_bound, _ensure_utc(now))
+    if lower_bound >= normalized_end:
+        return lower_bound
+
+    available_seconds = max(int((normalized_end - lower_bound).total_seconds()) - 1, 0)
+    offset_seconds = provider(0, available_seconds)
+    return lower_bound + timedelta(seconds=offset_seconds)
 
 
 class TopicSelector:

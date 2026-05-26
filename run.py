@@ -21,7 +21,7 @@ from userbot.client import UserBotClient
 from userbot.exchange_store import ExchangeStore
 from userbot.orchestrator import SwarmOrchestrator
 from userbot.reply_router import AddressedReplyRouter
-from userbot.scheduler import TopicSelector
+from userbot.scheduler import TopicSelector, pick_random_delay
 from userbot.swarm_manager import SwarmManager
 
 
@@ -244,6 +244,28 @@ async def _ensure_group_membership(
     return None
 
 
+def _build_group_membership_startup_hook(
+    *,
+    group_chat_id: int | None,
+    group_target: str | None,
+    join_delay_minutes: tuple[int, int] = (1, 3),
+):
+    """Строит startup hook с случайной задержкой перед membership check."""
+
+    async def startup_hook(profile: SwarmBotProfile, client_wrapper: UserBotClient) -> object | None:
+        delay = pick_random_delay(join_delay_minutes)
+        delay_seconds = delay.total_seconds()
+        logger.info(
+            "swarm: bot_id=%s ожидает случайную задержку перед membership check: %.1f sec",
+            profile.id,
+            delay_seconds,
+        )
+        await asyncio.sleep(delay_seconds)
+        return await _ensure_group_membership(client_wrapper, group_chat_id, group_target, profile.id)
+
+    return startup_hook
+
+
 async def _log_resolved_group(
     telegram_client: object | None,
     group_chat_id: int | None,
@@ -370,11 +392,9 @@ async def _run_swarm_mode(settings: object, runtime: RuntimeContext, scheduler: 
             api_hash=settings.api_hash,
             proxy_url=settings.proxy_url,
         ),
-        startup_hook=lambda profile, client: _ensure_group_membership(
-            client,
-            settings.group_chat_id,
-            settings.group_target,
-            profile.id,
+        startup_hook=_build_group_membership_startup_hook(
+            group_chat_id=settings.group_chat_id,
+            group_target=settings.group_target,
         ),
     )
     await manager.start()

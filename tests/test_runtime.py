@@ -430,6 +430,34 @@ async def test_ensure_group_membership_skips_join_when_public_dialog_is_already_
     wrapper.join_invite_link.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_group_membership_startup_hook_waits_random_delay_before_join(monkeypatch):
+    """Проверяет, что startup hook ждёт случайную задержку перед membership check."""
+    import run
+
+    sleep = AsyncMock()
+    ensure_membership = AsyncMock(return_value="@joined")
+
+    monkeypatch.setattr(run.asyncio, "sleep", sleep)
+    monkeypatch.setattr(run, "_ensure_group_membership", ensure_membership)
+    monkeypatch.setattr(run, "pick_random_delay", lambda minute_range, randint_provider=None: __import__("datetime").timedelta(seconds=85))
+
+    hook = run._build_group_membership_startup_hook(
+        group_chat_id=None,
+        group_target="@group",
+        join_delay_minutes=(1, 3),
+    )
+
+    profile = SimpleNamespace(id="anna")
+    client = SimpleNamespace()
+
+    resolved = await hook(profile, client)
+
+    assert resolved == "@joined"
+    sleep.assert_awaited_once_with(85.0)
+    ensure_membership.assert_awaited_once_with(client, None, "@group", "anna")
+
+
 class _AsyncNullContext:
     """Минимальный async context manager для тестов."""
 

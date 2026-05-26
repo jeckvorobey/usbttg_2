@@ -155,7 +155,7 @@ async def test_orchestrator_runs_exchange_and_saves_history():
         question_repeat_window=timedelta(days=2),
         active_windows_utc=["19-20"],
         now_provider=lambda: datetime(2026, 4, 20, 19, 5, tzinfo=UTC),
-        initiator_offset_minutes=(5, 5),
+        randint_provider=lambda start, end: start,
         responder_delay_minutes=(8, 8),
     )
     orchestrator._build_exchange_decision = AsyncMock(
@@ -375,6 +375,96 @@ async def test_orchestrator_skips_when_bot_is_busy():
 
     assert await orchestrator.run_once() is False
     exchange_store.mark_exchange_skipped.assert_not_called()
+
+
+def test_orchestrator_picks_initiator_due_at_inside_remaining_active_window():
+    """Проверяет, что старт инициатора выбирается внутри остатка активного окна."""
+    orchestrator = SwarmOrchestrator(
+        bot_profiles=[],
+        manager=SimpleNamespace(),
+        topic_selector=SimpleNamespace(),
+        prompt_composer=SimpleNamespace(),
+        gemini_client=SimpleNamespace(),
+        history=SimpleNamespace(),
+        exchange_store=SimpleNamespace(),
+        active_windows_utc=["3-7"],
+        now_provider=lambda: datetime(2026, 4, 20, 5, 0, tzinfo=UTC),
+        randint_provider=lambda start, end: 60,
+    )
+
+    due_at = orchestrator._pick_initiator_due_at(
+        window_start=datetime(2026, 4, 20, 3, 0, tzinfo=UTC),
+        window_end=datetime(2026, 4, 20, 7, 0, tzinfo=UTC),
+    )
+
+    assert due_at == datetime(2026, 4, 20, 5, 1, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_uses_second_precision_for_responder_due_time():
+    """Проверяет, что задержка ответа выбирается с точностью до секунд."""
+    initiator_client = SimpleNamespace(send_message=AsyncMock(return_value=SimpleNamespace(id=501)))
+    responder_client = SimpleNamespace(send_message=AsyncMock())
+    exchange_store = SimpleNamespace(
+        get_due_started_exchange=AsyncMock(return_value=None),
+        get_exchange_by_window_key=AsyncMock(return_value=None),
+        get_recent_pairs=AsyncMock(return_value=[]),
+        get_recent_topic_keys=AsyncMock(return_value=set()),
+        get_recent_questions=AsyncMock(return_value=[]),
+        get_recent_question_signatures=AsyncMock(return_value=set()),
+        create_exchange=AsyncMock(return_value="exchange-1"),
+        mark_exchange_started=AsyncMock(),
+        mark_exchange_completed=AsyncMock(),
+        mark_exchange_skipped=AsyncMock(),
+    )
+    history = SimpleNamespace(
+        get_session_history=AsyncMock(return_value=[]),
+        save_message=AsyncMock(),
+    )
+
+    orchestrator = SwarmOrchestrator(
+        bot_profiles=[
+            SwarmBotProfile(id="anna", session_string="anna", persona_file="anna.md", telegram_user_id=101),
+            SwarmBotProfile(id="mike", session_string="mike", persona_file="mike.md", telegram_user_id=202),
+        ],
+        manager=_manager_with_clients(initiator_client, responder_client),
+        topic_selector=SimpleNamespace(topics=["Где поесть суп?"]),
+        prompt_composer=SimpleNamespace(compose=AsyncMock(side_effect=["system-init", "system-reply"])),
+        gemini_client=SimpleNamespace(
+            start_topic=AsyncMock(return_value="Кто знает место с хорошим супом?"),
+            generate_reply=AsyncMock(return_value="Мне нравится Pho 54."),
+        ),
+        history=history,
+        exchange_store=exchange_store,
+        group_target="@chat",
+        question_repeat_window=timedelta(days=2),
+        active_windows_utc=["19-20"],
+        now_provider=lambda: datetime(2026, 4, 20, 19, 5, tzinfo=UTC),
+        randint_provider=lambda start, end: 0 if start == 0 else 85,
+        responder_delay_minutes=(1, 3),
+    )
+    orchestrator._build_exchange_decision = AsyncMock(
+        return_value=SimpleNamespace(
+            initiator=orchestrator.bot_profiles[0],
+            responder=orchestrator.bot_profiles[1],
+            topic="Где поесть суп?",
+            topic_key="где поесть суп",
+            recent_questions=[],
+        )
+    )
+
+    started = await orchestrator.run_once()
+
+    assert started is True
+    assert exchange_store.mark_exchange_started.await_args.kwargs["responder_scheduled_at"] == datetime(
+        2026,
+        4,
+        20,
+        19,
+        6,
+        25,
+        tzinfo=UTC,
+    )
 
 
 class _ScheduledSlot:

@@ -2,11 +2,16 @@
 
 import os
 import tempfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from userbot.scheduler import TopicSelector, is_within_windows_utc
+from userbot.scheduler import (
+    TopicSelector,
+    is_within_windows_utc,
+    pick_random_delay,
+    pick_random_datetime,
+)
 
 
 async def test_topic_selector_returns_topic_from_list():
@@ -96,3 +101,40 @@ def test_is_within_windows_utc_empty_list_is_always_open():
 def test_is_within_windows_utc_same_start_and_end_is_always_open():
     """Проверяет, что окно с одинаковыми start/end трактуется как круглосуточное."""
     assert is_within_windows_utc(["5-5"], datetime(2026, 4, 10, 1, 0, tzinfo=UTC)) is True
+
+
+def test_pick_random_delay_uses_second_precision_inside_minute_range():
+    """Проверяет, что задержка выбирается в секундах внутри минутного диапазона."""
+    delay = pick_random_delay((1, 3), randint_provider=lambda start, end: 85)
+
+    assert delay == timedelta(seconds=85)
+
+
+def test_pick_random_datetime_returns_time_inside_full_window():
+    """Проверяет выбор случайного времени внутри всего окна."""
+    start = datetime(2026, 4, 10, 3, 0, tzinfo=UTC)
+    end = datetime(2026, 4, 10, 7, 0, tzinfo=UTC)
+
+    scheduled_at = pick_random_datetime(
+        start,
+        end,
+        randint_provider=lambda start_seconds, end_seconds: 6_570,
+    )
+
+    assert scheduled_at == datetime(2026, 4, 10, 4, 49, 30, tzinfo=UTC)
+
+
+def test_pick_random_datetime_does_not_schedule_in_the_past():
+    """Проверяет, что внутри уже начавшегося окна время не выбирается раньше now."""
+    start = datetime(2026, 4, 10, 3, 0, tzinfo=UTC)
+    end = datetime(2026, 4, 10, 7, 0, tzinfo=UTC)
+    now = datetime(2026, 4, 10, 5, 0, tzinfo=UTC)
+
+    scheduled_at = pick_random_datetime(
+        start,
+        end,
+        now=now,
+        randint_provider=lambda start_seconds, end_seconds: 60,
+    )
+
+    assert scheduled_at == datetime(2026, 4, 10, 5, 1, tzinfo=UTC)
